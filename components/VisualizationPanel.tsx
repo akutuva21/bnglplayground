@@ -3,7 +3,6 @@ import { BNGLModel, SimulationOptions, SimulationResults } from '../types';
 import { Tabs, TabList, Tab, TabPanels, TabPanel } from './ui/Tabs';
 import { ResultsChart } from './ResultsChart';
 import { NetworkGraph } from './NetworkGraph';
-import { ParametersTab } from './tabs/ParametersTab';
 import { StructureAnalysisTab } from './tabs/StructureAnalysisTab';
 import { SteadyStateTab } from './tabs/SteadyStateTab';
 import { ParameterScanTab } from './tabs/ParameterScanTab';
@@ -14,19 +13,15 @@ interface VisualizationPanelProps {
   results: SimulationResults | null;
   onSimulate: (options: SimulationOptions) => void;
   isSimulating: boolean;
-  onModelChange: (model: BNGLModel) => void;
 }
 
-export const VisualizationPanel: React.FC<VisualizationPanelProps> = ({ model, results, onSimulate, isSimulating, onModelChange }) => {
+export const VisualizationPanel: React.FC<VisualizationPanelProps> = ({ model, results, onSimulate, isSimulating }) => {
   const [visibleSpecies, setVisibleSpecies] = useState<Set<string>>(new Set());
-  const [currentModel, setCurrentModel] = useState<BNGLModel | null>(model);
 
   React.useEffect(() => {
-    if(model) {
-      setCurrentModel(JSON.parse(JSON.stringify(model))); // deep copy
-      setVisibleSpecies(new Set(model.observables.map(o => o.name)));
+    if (model) {
+      setVisibleSpecies(new Set(model.observables.map((o) => o.name)));
     } else {
-      setCurrentModel(null);
       setVisibleSpecies(new Set());
     }
   }, [model]);
@@ -38,7 +33,6 @@ export const VisualizationPanel: React.FC<VisualizationPanelProps> = ({ model, r
           <Tab>Time Course</Tab>
           <Tab>Network Graph</Tab>
           <Tab>Rule Cartoons</Tab>
-          <Tab>Parameters</Tab>
           <Tab>Structure</Tab>
           <Tab>Steady State</Tab>
           <Tab>Parameter Scan</Tab>
@@ -54,19 +48,13 @@ export const VisualizationPanel: React.FC<VisualizationPanelProps> = ({ model, r
             <CartoonTab model={model} />
           </TabPanel>
           <TabPanel>
-            <ParametersTab model={currentModel} onModelUpdate={(updatedModel) => {
-              setCurrentModel(updatedModel);
-              onModelChange(updatedModel);
-            }} />
-          </TabPanel>
-          <TabPanel>
              <StructureAnalysisTab model={model} />
           </TabPanel>
           <TabPanel>
-            <SteadyStateTab model={currentModel ?? model} onSimulate={onSimulate} isSimulating={isSimulating} />
+            <SteadyStateTab model={model} onSimulate={onSimulate} isSimulating={isSimulating} />
           </TabPanel>
           <TabPanel>
-            <ParameterScanTab model={currentModel ?? model} />
+            <ParameterScanTab model={model} />
           </TabPanel>
         </TabPanels>
       </Tabs>

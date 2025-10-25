@@ -56,11 +56,6 @@ function App() {
     setResults(null);
   };
 
-  const handleModelChange = useCallback((updatedModel: BNGLModel) => {
-    setModel(updatedModel);
-    setResults(null);
-  }, []);
-  
   const handleStatusClose = () => {
     setStatus(null);
   };
@@ -91,7 +86,6 @@ function App() {
                     results={results}
                     onSimulate={handleSimulate}
                     isSimulating={isSimulating}
-                    onModelChange={handleModelChange}
                  />
             </div>
         </div>
