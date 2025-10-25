@@ -63,3 +63,16 @@ export interface SimulationOptions {
   steadyStateTolerance?: number;
   steadyStateWindow?: number;
 }
+
+// Worker message contracts
+export interface WorkerRequest<T = any> {
+  id?: number;
+  type: string;
+  payload?: T;
+}
+
+export interface WorkerResponse<T = any> {
+  id?: number;
+  type: string;
+  payload?: T;
+}
