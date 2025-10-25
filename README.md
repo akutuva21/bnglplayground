@@ -1,16 +1,90 @@
 <div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
 
 # BioNetGen Web Simulator
 
-An interactive playground for building BNGL models, inspecting generated networks, and running ODE/SSA simulations directly in the browser.
+Interactive BNGL playground for building models, inspecting generated networks, and running ODE/SSA simulations entirely in the browser.
 
-## Run Locally
+</div>
 
-**Prerequisites:** Node.js
+## Features
 
-1. Install dependencies: `npm install`
-2. Start the dev server: `npm run dev`
+- Monaco-powered BNGL editor with syntax highlighting, example gallery, and file import/export helpers
+- Dedicated web worker that parses BNGL, expands rule-based networks, and runs adaptive RK4 ODE or Gillespie SSA simulations
+- Multi-tab visualization panel with time-course plots (Recharts), Cytoscape-powered reaction network graph, rule cartoons, parameter editing, structure analysis, and steady-state finder
+- Light/dark theming, responsive Tailwind UI, and rich status messaging for parse/simulation feedback
+- Stand-alone scripts for validating the worker bundle (`scripts/testParse.mjs`, `scripts/runWorkerTest.mjs`) and a growing Vitest suite for catalog integrity checks
 
-The app launches a local Vite dev server and opens the simulator UI. No external API keys are required.
+## Quick Start
+
+**Prerequisites:** Node.js 20+
+
+```bash
+npm install
+npm run dev
+```
+
+The Vite dev server runs on `http://localhost:3000/` and hot-reloads as you edit code. No external API keys are required.
+
+## Available Scripts
+
+- `npm run dev` – start the Vite dev server
+- `npm run build` – produce a production build in `dist/`
+- `npm run preview` – serve the production bundle locally
+- `npm run test` – execute Vitest unit tests
+
+## Architecture Overview
+
+- **BNGL worker (`services/bnglService.ts`)** – embeds the parser/simulator inside `String.raw` template code so it executes inside a web worker; exposes `parse`, `simulate`, and `generateNetwork` APIs.
+- **UI shell (`App.tsx`)** – coordinates editor state, model parsing, simulation requests, and surface-level status handling.
+- **Visualization layer (`components/`)** – modular tabs for charts, network graph, rule cartoons, parameter editing, structural analysis, and steady-state exploration.
+- **Shared utilities (`constants.ts`, `types.ts`)** – typed BNGL model representations, initial template, and curated example catalog.
+- **Scripts (`scripts/`)** – Node-based harnesses that run the worker logic outside the browser for debugging and regression testing.
+
+```
+.
+├── App.tsx
+├── components/
+│   ├── EditorPanel.tsx
+│   ├── tabs/
+│   └── ui/
+├── services/
+│   └── bnglService.ts
+├── scripts/
+│   ├── runWorkerTest.mjs
+│   └── testParse.mjs
+├── constants.ts
+├── types.ts
+└── tests/
+	└── constants.spec.ts
+```
+
+## Simulation Workflow
+
+1. Paste or load BNGL code in the editor (use the example gallery or upload a `.bngl` file).
+2. Click **Parse Model** to build the internal network representation and unlock visualization tabs.
+3. Choose **Simulate** and select ODE or SSA methods; steady-state runs reuse the ODE backend with adaptive RK4 convergence checks.
+4. Inspect results: time-course charts, network graph layouts, rule cartoons, and parameter adjustments all update live.
+
+## Testing
+
+Vitest runs in a Node environment and currently covers the curated example catalog and synchronization with the default template.
+
+```bash
+npm run test
+```
+
+## Deployment Notes
+
+- The app is a static Vite build—any static host (GitHub Pages, Netlify, Vercel, S3) can serve the `dist/` directory.
+- Ensure that the static host allows loading CDN-hosted dependencies declared in `index.html` import maps.
+
+## Roadmap
+
+- [ ] Implement backend logic for the parameter scan UI (currently front-end only)
+- [ ] Extend structural analysis tooling with conservation law reporting
+- [ ] Polish rule cartoon renderer with binding/state glyphs
+
+## Acknowledgements
+
+- Built on top of the BioNetGen rule-based modeling paradigm
+- Uses Monaco Editor, Cytoscape, Recharts, Tailwind CSS, and Vite
