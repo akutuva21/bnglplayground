@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { BNGLModel } from '../../types';
 import { Button } from '../ui/Button';
@@ -39,12 +39,34 @@ const roundForInput = (value: number): string => {
   return rounded.toString();
 };
 
+const DEFAULT_ZERO_DELTA = 0.1;
+
+const computeDefaultBounds = (value: number): [number, number] => {
+  if (!Number.isFinite(value) || value < 0) return [0, 0];
+  // For value = 0, use a fixed delta; otherwise compute exactly ±10%
+  if (value === 0) {
+    return [0, DEFAULT_ZERO_DELTA];
+  }
+  const lower = Math.max(0, value * 0.9);  // p1 - 10%
+  const upper = value * 1.1;               // p1 + 10%
+  return [lower, upper];
+};
+
 const cloneWithParameters = (model: BNGLModel, overrides: Record<string, number>): BNGLModel => {
-  const nextModel: BNGLModel = JSON.parse(JSON.stringify(model));
-  nextModel.parameters = { ...model.parameters, ...overrides };
-  nextModel.reactions = [];
-  nextModel.reactionRules.forEach((rule) => {
-    const forwardRate = nextModel.parameters[rule.rate] ?? parseFloat(rule.rate);
+  if (!model) {
+    throw new Error('cloneWithParameters called with null model');
+  }
+  // Shallow-clone the model and only replace parameters and rebuild reactions.
+  // Avoid JSON.parse(JSON.stringify(...)) which is expensive when called many times.
+  const nextModel: BNGLModel = {
+    ...model,
+    parameters: { ...(model.parameters || {}), ...overrides },
+    reactions: [],
+  } as BNGLModel;
+
+  // Rebuild reactions based on reactionRules and the new parameters.
+  (model.reactionRules || []).forEach((rule) => {
+    const forwardRate = nextModel.parameters[rule.rate] ?? parseFloat(rule.rate as unknown as string);
     if (!Number.isNaN(forwardRate)) {
       nextModel.reactions.push({
         reactants: rule.reactants,
@@ -54,7 +76,7 @@ const cloneWithParameters = (model: BNGLModel, overrides: Record<string, number>
       });
     }
     if (rule.isBidirectional && rule.reverseRate) {
-      const reverseRate = nextModel.parameters[rule.reverseRate] ?? parseFloat(rule.reverseRate);
+      const reverseRate = nextModel.parameters[rule.reverseRate] ?? parseFloat(rule.reverseRate as unknown as string);
       if (!Number.isNaN(reverseRate)) {
         nextModel.reactions.push({
           reactants: rule.products,
@@ -65,6 +87,7 @@ const cloneWithParameters = (model: BNGLModel, overrides: Record<string, number>
       }
     }
   });
+
   return nextModel;
 };
 
@@ -101,6 +124,13 @@ export const ParameterScanTab: React.FC<ParameterScanTabProps> = ({ model }) => 
   const [isRunning, setIsRunning] = useState(false);
   const [progress, setProgress] = useState({ current: 0, total: 0 });
   const [error, setError] = useState<string | null>(null);
+  const [scanAbortController, setScanAbortController] = useState<AbortController | null>(null);
+  const cachedModelIdRef = useRef<number | null>(null);
+  
+
+  const previousModelRef = useRef<BNGLModel | null>(null);
+  const previousParameter1 = useRef<string | null>(null);
+  const previousParameter2 = useRef<string | null>(null);
 
   const parameterNames = useMemo(() => (model ? Object.keys(model.parameters) : []), [model]);
   const observableNames = useMemo(() => (model ? model.observables.map((obs) => obs.name) : []), [model]);
@@ -112,7 +142,24 @@ export const ParameterScanTab: React.FC<ParameterScanTabProps> = ({ model }) => 
       setSelectedObservable('');
       setOneDResult(null);
       setTwoDResult(null);
+      setParam1Start('');
+      setParam1End('');
+      setParam2Start('');
+      setParam2End('');
+      previousModelRef.current = null;
+      previousParameter1.current = null;
+      previousParameter2.current = null;
       return;
+    }
+
+    if (previousModelRef.current !== model) {
+      setParam1Start('');
+      setParam1End('');
+      setParam2Start('');
+      setParam2End('');
+      previousParameter1.current = null;
+      previousParameter2.current = null;
+      previousModelRef.current = model;
     }
 
     if (!parameterNames.includes(parameter1)) {
@@ -131,46 +178,126 @@ export const ParameterScanTab: React.FC<ParameterScanTabProps> = ({ model }) => 
 
   useEffect(() => {
     if (!model) return;
-    if (parameter1) {
-      const base = model.parameters[parameter1];
-      if (base !== undefined && !param1Start) {
-        setParam1Start(roundForInput(base * 0.5));
-      }
-      if (base !== undefined && !param1End) {
-        setParam1End(roundForInput(base * 1.5));
-      }
+    if (parameter1 && previousParameter1.current !== parameter1) {
+      previousParameter1.current = parameter1;
+      setParam1Start('');
+      setParam1End('');
     }
-  }, [model, parameter1, param1Start, param1End]);
+  }, [model, parameter1]);
 
   useEffect(() => {
     if (!model) return;
-    if (parameter2) {
-      const base = model.parameters[parameter2];
-      if (base !== undefined && !param2Start) {
-        setParam2Start(roundForInput(base * 0.5));
-      }
-      if (base !== undefined && !param2End) {
-        setParam2End(roundForInput(base * 1.5));
-      }
+    if (parameter2 && previousParameter2.current !== parameter2) {
+      previousParameter2.current = parameter2;
+      setParam2Start('');
+      setParam2End('');
     }
-  }, [model, parameter2, param2Start, param2End]);
+  }, [model, parameter2]);
 
   useEffect(() => {
     setOneDResult(null);
     setTwoDResult(null);
   }, [scanType]);
 
-  if (!model) {
-    return <div className="text-slate-500 dark:text-slate-400">Parse a model to set up a parameter scan.</div>;
-  }
+  const cancelActiveScan = useCallback((reason?: string) => {
+    setScanAbortController((controller) => {
+      if (controller) {
+        controller.abort(reason ?? 'Parameter scan cancelled.');
+      }
+      return null;
+    });
+  }, []);
 
-  if (parameterNames.length === 0) {
-    return <div className="text-slate-500 dark:text-slate-400">The current model does not declare any parameters to scan.</div>;
-  }
+  
+
+  const oneDChartData = useMemo(() => {
+    if (!oneDResult || !selectedObservable) return [];
+    return oneDResult.values.map((entry) => ({
+      parameterValue: entry.parameterValue,
+      observableValue: entry.observables[selectedObservable] ?? 0,
+    }));
+  }, [oneDResult, selectedObservable]);
+
+  const xAxisDomain = useMemo(() => {
+    if (!oneDChartData || oneDChartData.length === 0) return [0, 1];
+    const vals = oneDChartData.map((d) => d.parameterValue).filter(Number.isFinite);
+    if (vals.length === 0) return [0, 1];
+    let min = Math.min(...vals);
+    let max = Math.max(...vals);
+    if (!Number.isFinite(min)) min = 0;
+    if (!Number.isFinite(max)) max = min + 1;
+    if (min === max) {
+      const pad = Math.abs(min) * 0.1 || 0.01;
+      return [Number((min - pad).toPrecision(12)), Number((max + pad).toPrecision(12))];
+    }
+    const lower = Math.max(0, min * 0.9);
+    const upper = max * 1.1;
+    return [Number(lower.toPrecision(12)), Number(upper.toPrecision(12))];
+  }, [oneDChartData]);
+
+  const yAxisDomain = useMemo(() => {
+    if (!oneDChartData || oneDChartData.length === 0) return ['auto', 'auto'] as const;
+    const vals = oneDChartData.map((d) => d.observableValue).filter(Number.isFinite);
+    if (vals.length === 0) return ['auto', 'auto'] as const;
+    let min = Math.min(...vals);
+    let max = Math.max(...vals);
+    if (!Number.isFinite(min) || !Number.isFinite(max)) return ['auto', 'auto'] as const;
+    if (min === max) {
+      const pad = Math.abs(min) * 0.1 || 0.01;
+      return [Number((min - pad).toPrecision(12)), Number((max + pad).toPrecision(12))] as const;
+    }
+    const lower = min * 0.9;
+    const upper = max * 1.1;
+    return [Number(lower.toPrecision(12)), Number(upper.toPrecision(12))] as const;
+  }, [oneDChartData]);
+
+  const heatmapData = useMemo(() => {
+    if (!twoDResult || !selectedObservable) return null;
+    const matrix = twoDResult.grid[selectedObservable];
+    if (!matrix) return null;
+    let min = Infinity;
+    let max = -Infinity;
+    matrix.forEach((row) => {
+      row.forEach((value) => {
+        if (value < min) min = value;
+        if (value > max) max = value;
+      });
+    });
+    if (!Number.isFinite(min) || !Number.isFinite(max)) {
+      min = 0;
+      max = 0;
+    }
+    return { matrix, min, max };
+  }, [twoDResult, selectedObservable]);
+
+  // Do not early-return here; use `guardMessage` in the JSX so hook order stays stable across renders.
+
+  const baseParam1 = parameter1 && model ? model.parameters[parameter1] : undefined;
+  const baseParam2 = parameter2 && model ? model.parameters[parameter2] : undefined;
+
+  const [defaultParam1Lower, defaultParam1Upper] = useMemo(() => {
+    if (baseParam1 === undefined) return [0, 0];
+    return computeDefaultBounds(baseParam1);
+  }, [baseParam1]);
+
+  const [defaultParam2Lower, defaultParam2Upper] = useMemo(() => {
+    if (baseParam2 === undefined) return [0, 0];
+    return computeDefaultBounds(baseParam2);
+  }, [baseParam2]);
+
+  const defaultParam1Start = baseParam1 !== undefined ? roundForInput(defaultParam1Lower) : '';
+  const defaultParam1End = baseParam1 !== undefined ? roundForInput(defaultParam1Upper) : '';
+  const defaultParam2Start = baseParam2 !== undefined ? roundForInput(defaultParam2Lower) : '';
+  const defaultParam2End = baseParam2 !== undefined ? roundForInput(defaultParam2Upper) : '';
+
+  const effectiveParam1Start = param1Start !== '' ? param1Start : defaultParam1Start;
+  const effectiveParam1End = param1End !== '' ? param1End : defaultParam1End;
+  const effectiveParam2Start = param2Start !== '' ? param2Start : defaultParam2Start;
+  const effectiveParam2End = param2End !== '' ? param2End : defaultParam2End;
 
   const canRunScan = () => {
-    if (!parameter1 || !param1Start || !param1End || !param1Steps) return false;
-    if (scanType === '2d' && (!parameter2 || parameter2 === parameter1 || !param2Start || !param2End || !param2Steps)) {
+    if (!parameter1 || !effectiveParam1Start || !effectiveParam1End || !param1Steps) return false;
+    if (scanType === '2d' && (!parameter2 || parameter2 === parameter1 || !effectiveParam2Start || !effectiveParam2End || !param2Steps)) {
       return false;
     }
     return true;
@@ -178,9 +305,15 @@ export const ParameterScanTab: React.FC<ParameterScanTabProps> = ({ model }) => 
 
   const handleRunScan = async () => {
     if (!canRunScan()) return;
+    if (!model) {
+      setError('No model is loaded to run the scan.');
+      return;
+    }
 
-    const start1 = Number(param1Start);
-    const end1 = Number(param1End);
+    cancelActiveScan('Parameter scan replaced by a new request.');
+
+    const start1 = Number(effectiveParam1Start);
+    const end1 = Number(effectiveParam1End);
     const steps1 = Math.max(1, Math.floor(Number(param1Steps)));
     if (!Number.isFinite(start1) || !Number.isFinite(end1) || Number.isNaN(steps1) || steps1 < 1) {
       setError('Please provide valid numeric settings for the primary parameter.');
@@ -199,8 +332,8 @@ export const ParameterScanTab: React.FC<ParameterScanTabProps> = ({ model }) => 
     let range2: number[] = [];
 
     if (scanType === '2d') {
-      const start2 = Number(param2Start);
-      const end2 = Number(param2End);
+      const start2 = Number(effectiveParam2Start);
+      const end2 = Number(effectiveParam2End);
       const steps2 = Math.max(1, Math.floor(Number(param2Steps)));
       if (!Number.isFinite(start2) || !Number.isFinite(end2) || Number.isNaN(steps2) || steps2 < 1) {
         setError('Please provide valid numeric settings for the second parameter.');
@@ -231,89 +364,98 @@ export const ParameterScanTab: React.FC<ParameterScanTabProps> = ({ model }) => 
       n_steps: nStepsValue,
     } as const;
 
+    const controller = new AbortController();
+    setScanAbortController(controller);
+
     try {
-      if (scanType === '1d') {
-        const result: OneDResult = { parameterName: parameter1, values: [] };
-        let completed = 0;
-        for (const value of range1) {
-          const customizedModel = cloneWithParameters(model, { [parameter1]: value });
-          const simResults = await bnglService.simulate(customizedModel, simulationOptions);
-          const lastPoint = simResults.data.at(-1) ?? {};
-          const observables = observableNames.reduce<Record<string, number>>((acc, name) => {
-            const raw = lastPoint[name];
-            const numeric = typeof raw === 'number' ? raw : Number(raw ?? 0);
-            acc[name] = Number.isFinite(numeric) ? numeric : 0;
-            return acc;
-          }, {});
-          result.values.push({ parameterValue: value, observables });
-          completed += 1;
-          setProgress({ current: completed, total: totalRuns });
-        }
-        setOneDResult(result);
-      } else {
-        const grid: Record<string, number[][]> = {};
-        observableNames.forEach((name) => {
-          grid[name] = range2.map(() => new Array(range1.length).fill(0));
-        });
-        let completed = 0;
-        for (let yi = 0; yi < range2.length; yi += 1) {
-          for (let xi = 0; xi < range1.length; xi += 1) {
-            const overrides = { [parameter1]: range1[xi], [parameter2]: range2[yi] };
-            const customizedModel = cloneWithParameters(model, overrides);
-            const simResults = await bnglService.simulate(customizedModel, simulationOptions);
+        // Cache the base model in the worker to avoid serializing the full model for every run.
+    const modelId = await bnglService.prepareModel(model, { signal: controller.signal });
+    cachedModelIdRef.current = modelId;
+
+        if (scanType === '1d') {
+          const result: OneDResult = { parameterName: parameter1, values: [] };
+          let completed = 0;
+          for (const value of range1) {
+            const overrides = { [parameter1]: value } as Record<string, number>;
+            const simResults = await bnglService.simulateCached(modelId, overrides, simulationOptions, {
+              signal: controller.signal,
+              description: `Parameter scan (${parameter1}=${value})`,
+            });
             const lastPoint = simResults.data.at(-1) ?? {};
-            observableNames.forEach((name) => {
+            const observables = observableNames.reduce<Record<string, number>>((acc, name) => {
               const raw = lastPoint[name];
               const numeric = typeof raw === 'number' ? raw : Number(raw ?? 0);
-              grid[name][yi][xi] = Number.isFinite(numeric) ? numeric : 0;
-            });
+              acc[name] = Number.isFinite(numeric) ? numeric : 0;
+              return acc;
+            }, {});
+            result.values.push({ parameterValue: value, observables });
             completed += 1;
             setProgress({ current: completed, total: totalRuns });
           }
+          setOneDResult(result);
+        } else {
+          const grid: Record<string, number[][]> = {};
+          observableNames.forEach((name) => {
+            grid[name] = range2.map(() => new Array(range1.length).fill(0));
+          });
+          let completed = 0;
+          for (let yi = 0; yi < range2.length; yi += 1) {
+            for (let xi = 0; xi < range1.length; xi += 1) {
+              const overrides = { [parameter1]: range1[xi], [parameter2]: range2[yi] };
+              const simResults = await bnglService.simulateCached(modelId, overrides, simulationOptions, {
+                signal: controller.signal,
+                description: `2D parameter scan (${parameter1}, ${parameter2})`,
+              });
+              const lastPoint = simResults.data.at(-1) ?? {};
+              observableNames.forEach((name) => {
+                const raw = lastPoint[name];
+                const numeric = typeof raw === 'number' ? raw : Number(raw ?? 0);
+                grid[name][yi][xi] = Number.isFinite(numeric) ? numeric : 0;
+              });
+              completed += 1;
+              setProgress({ current: completed, total: totalRuns });
+            }
+          }
+          setTwoDResult({
+            parameterNames: [parameter1, parameter2],
+            xValues: range1,
+            yValues: range2,
+            grid,
+          });
         }
-        setTwoDResult({
-          parameterNames: [parameter1, parameter2],
-          xValues: range1,
-          yValues: range2,
-          grid,
-        });
-      }
     } catch (scanError) {
-      const message = scanError instanceof Error ? scanError.message : String(scanError);
-      setError(`Parameter scan failed: ${message}`);
-      setOneDResult(null);
-      setTwoDResult(null);
+      if (scanError instanceof DOMException && scanError.name === 'AbortError') {
+        const cancelledByUser = scanError.message?.includes('cancelled by user');
+        setError(cancelledByUser ? 'Parameter scan was cancelled.' : null);
+      } else {
+        const message = scanError instanceof Error ? scanError.message : String(scanError);
+        setError(`Parameter scan failed: ${message}`);
+        setOneDResult(null);
+        setTwoDResult(null);
+      }
     } finally {
       setIsRunning(false);
+      const wasAborted = controller.signal.aborted;
+      setScanAbortController((current) => (current === controller ? null : current));
+      if (!wasAborted) {
+        setProgress((current) => ({ ...current, current: current.total }));
+      }
     }
   };
 
-  const oneDChartData = useMemo(() => {
-    if (!oneDResult || !selectedObservable) return [];
-    return oneDResult.values.map((entry) => ({
-      parameterValue: entry.parameterValue,
-      observableValue: entry.observables[selectedObservable] ?? 0,
-    }));
-  }, [oneDResult, selectedObservable]);
-
-  const heatmapData = useMemo(() => {
-    if (!twoDResult || !selectedObservable) return null;
-    const matrix = twoDResult.grid[selectedObservable];
-    if (!matrix) return null;
-    let min = Infinity;
-    let max = -Infinity;
-    matrix.forEach((row) => {
-      row.forEach((value) => {
-        if (value < min) min = value;
-        if (value > max) max = value;
-      });
-    });
-    if (!Number.isFinite(min) || !Number.isFinite(max)) {
-      min = 0;
-      max = 0;
-    }
-    return { matrix, min, max };
-  }, [twoDResult, selectedObservable]);
+  // Release any cached model when this component unmounts or when the model changes.
+  useEffect(() => {
+    return () => {
+      const id = cachedModelIdRef.current;
+      if (typeof id === 'number') {
+        bnglService.releaseModel(id).catch((err) => {
+          // eslint-disable-next-line no-console
+          console.warn('Failed to release cached model on ParameterScanTab unmount', id, err);
+        });
+        cachedModelIdRef.current = null;
+      }
+    };
+  }, [model]);
 
   const makeCellColor = (value: number, min: number, max: number) => {
     if (max <= min) return 'rgba(33,128,141,0.2)';
@@ -321,6 +463,25 @@ export const ParameterScanTab: React.FC<ParameterScanTabProps> = ({ model }) => 
     const alpha = 0.15 + 0.75 * Math.min(Math.max(ratio, 0), 1);
     return `rgba(33,128,141,${alpha.toFixed(2)})`;
   };
+
+  const guardMessage = !model
+    ? 'Parse a model to set up a parameter scan.'
+    : parameterNames.length === 0
+    ? 'The current model does not declare any parameters to scan.'
+    : null;
+
+  // lightweight debug: log only when key dependencies change to avoid spamming console
+  // eslint-disable-next-line no-console
+  React.useEffect(() => {
+    console.debug('ParameterScanTab render', {
+      modelKeys: model ? Object.keys(model.parameters) : null,
+      parameter1,
+      parameter2,
+      oneDValues: oneDResult ? oneDResult.values.length : 0,
+      xAxisDomain,
+      yAxisDomain,
+    });
+  }, [model, parameter1, parameter2, oneDResult, xAxisDomain, yAxisDomain]);
 
   return (
     <div className="space-y-6">
@@ -349,8 +510,8 @@ export const ParameterScanTab: React.FC<ParameterScanTabProps> = ({ model }) => 
               ))}
             </Select>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <Input type="number" value={param1Start} onChange={(event) => setParam1Start(event.target.value)} placeholder="Start" />
-              <Input type="number" value={param1End} onChange={(event) => setParam1End(event.target.value)} placeholder="End" />
+              <Input type="number" value={param1Start} onChange={(event) => setParam1Start(event.target.value)} placeholder={defaultParam1Start || "Start"} />
+              <Input type="number" value={param1End} onChange={(event) => setParam1End(event.target.value)} placeholder={defaultParam1End || "End"} />
               <Input type="number" value={param1Steps} min={1} onChange={(event) => setParam1Steps(event.target.value)} placeholder="Steps" />
             </div>
           </div>
@@ -366,8 +527,8 @@ export const ParameterScanTab: React.FC<ParameterScanTabProps> = ({ model }) => 
                 ))}
               </Select>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <Input type="number" value={param2Start} onChange={(event) => setParam2Start(event.target.value)} placeholder="Start" />
-                <Input type="number" value={param2End} onChange={(event) => setParam2End(event.target.value)} placeholder="End" />
+                <Input type="number" value={param2Start} onChange={(event) => setParam2Start(event.target.value)} placeholder={defaultParam2Start || "Start"} />
+                <Input type="number" value={param2End} onChange={(event) => setParam2End(event.target.value)} placeholder={defaultParam2End || "End"} />
                 <Input type="number" value={param2Steps} min={1} onChange={(event) => setParam2Steps(event.target.value)} placeholder="Steps" />
               </div>
             </div>
@@ -409,12 +570,17 @@ export const ParameterScanTab: React.FC<ParameterScanTabProps> = ({ model }) => 
           </div>
           <div className="flex gap-2">
             <Button variant="subtle" onClick={() => {
+              cancelActiveScan('Parameter scan cancelled by user.');
               setOneDResult(null);
               setTwoDResult(null);
               setError(null);
+              setProgress({ current: 0, total: 0 });
             }}>
               Clear Results
             </Button>
+            {isRunning && (
+              <Button variant="danger" onClick={() => cancelActiveScan('Parameter scan cancelled by user.')}>Cancel Scan</Button>
+            )}
             <Button onClick={handleRunScan} disabled={isRunning || !canRunScan()}>
               {isRunning ? 'Running…' : 'Run Scan'}
             </Button>
@@ -428,6 +594,8 @@ export const ParameterScanTab: React.FC<ParameterScanTabProps> = ({ model }) => 
         </div>
       )}
 
+      
+
       {isRunning && (
         <div className="flex items-center gap-3 text-sm text-slate-600 dark:text-slate-300">
           <LoadingSpinner className="w-5 h-5" />
@@ -437,7 +605,9 @@ export const ParameterScanTab: React.FC<ParameterScanTabProps> = ({ model }) => 
         </div>
       )}
 
-      {oneDResult && oneDResult.values.length > 0 && (
+      {guardMessage ? (
+        <div className="text-slate-500 dark:text-slate-400">{guardMessage}</div>
+      ) : oneDResult && oneDResult.values.length > 0 && (
         <Card className="space-y-6">
           <h3 className="text-lg font-semibold text-slate-800 dark:text-slate-100">1D Scan Results</h3>
           {selectedObservable && oneDChartData.length > 0 ? (
@@ -448,23 +618,36 @@ export const ParameterScanTab: React.FC<ParameterScanTabProps> = ({ model }) => 
                   dataKey="parameterValue"
                   label={{ value: oneDResult.parameterName, position: 'insideBottom', offset: -6 }}
                   type="number"
+                  domain={[xAxisDomain[0], xAxisDomain[1]]}
+                  tickFormatter={(value) => formatNumber(value)}
                 />
-                <YAxis label={{ value: selectedObservable, angle: -90, position: 'insideLeft' }} />
+                <YAxis
+                  label={{ value: selectedObservable, angle: -90, position: 'insideLeft', offset: 16 }}
+                  domain={yAxisDomain}
+                  tickFormatter={(value) => formatNumber(value)}
+                />
                 <Tooltip
                   formatter={(value: number) => formatNumber(value as number)}
                   labelFormatter={(value) => `${oneDResult.parameterName}: ${formatNumber(value as number)}`}
+                  trigger="hover"
+                  cursor={{ stroke: 'rgba(148, 163, 184, 0.45)', strokeDasharray: '4 4' }}
                 />
-                <Legend />
+                <Legend
+                  verticalAlign="bottom"
+                  align="center"
+                  wrapperStyle={{ paddingTop: 16 }}
+                />
                 <Line
                   type="monotone"
                   dataKey="observableValue"
                   name={selectedObservable}
                   stroke={CHART_COLORS[0]}
                   strokeWidth={2}
-                  dot={false}
+                  dot={{ r: 2 }}
+                  activeDot={{ r: 4 }}
                 />
               </LineChart>
-            </ResponsiveContainer>
+              </ResponsiveContainer>
           ) : (
             <p className="text-sm text-slate-500">Select an observable to visualize the scan.</p>
           )}

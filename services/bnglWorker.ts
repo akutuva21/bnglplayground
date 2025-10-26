@@ -7,35 +7,92 @@ import type {
   SimulationResults,
   WorkerRequest,
   WorkerResponse,
+  SerializedWorkerError,
 } from '../types';
 
 const ctx: DedicatedWorkerGlobalScope = self as unknown as DedicatedWorkerGlobalScope;
 
+type JobState = {
+  cancelled: boolean;
+};
+
+const jobStates = new Map<number, JobState>();
+
+// Cached models stored by the worker to avoid re-sending large model objects repeatedly.
+const cachedModels = new Map<number, BNGLModel>();
+let nextModelId = 1;
+// LRU cache size limit for cached models inside the worker
+const MAX_CACHED_MODELS = 8;
+
+const touchCachedModel = (modelId: number) => {
+  const m = cachedModels.get(modelId);
+  if (!m) return;
+  // move to the end to mark as recently used
+  cachedModels.delete(modelId);
+  cachedModels.set(modelId, m);
+};
+
+const registerJob = (id: number) => {
+  if (typeof id !== 'number' || Number.isNaN(id)) return;
+  jobStates.set(id, { cancelled: false });
+};
+
+const markJobComplete = (id: number) => {
+  jobStates.delete(id);
+};
+
+const cancelJob = (id: number) => {
+  const entry = jobStates.get(id);
+  if (entry) {
+    entry.cancelled = true;
+  }
+};
+
+const ensureNotCancelled = (id: number) => {
+  const entry = jobStates.get(id);
+  if (entry && entry.cancelled) {
+    throw new DOMException('Operation cancelled by main thread', 'AbortError');
+  }
+};
+
+const serializeError = (error: unknown): SerializedWorkerError => {
+  if (error instanceof DOMException) {
+    return { name: error.name, message: error.message, stack: error.stack ?? undefined };
+  }
+  if (error instanceof Error) {
+    return { name: error.name, message: error.message, stack: error.stack ?? undefined };
+  }
+  if (error && typeof error === 'object' && 'message' in error) {
+    const message = typeof (error as { message?: unknown }).message === 'string' ? (error as { message: string }).message : 'Unknown error';
+    const name = typeof (error as { name?: unknown }).name === 'string' ? (error as { name: string }).name : undefined;
+    const stack = typeof (error as { stack?: unknown }).stack === 'string' ? (error as { stack: string }).stack : undefined;
+    return { name, message, stack };
+  }
+  return { message: typeof error === 'string' ? error : 'Unknown error' };
+};
+
 ctx.addEventListener('error', (event) => {
-  const payload = {
-    message: event.message || (event.error && event.error.message) || 'Unknown worker error',
-    filename: event.filename,
-    lineno: event.lineno,
-    colno: event.colno,
-    stack: event.error && event.error.stack,
+  const payload: SerializedWorkerError = {
+    ...serializeError(event.error ?? event.message ?? 'Unknown worker error'),
+    details: {
+      filename: event.filename,
+      lineno: event.lineno,
+      colno: event.colno,
+    },
   };
   ctx.postMessage({ id: -1, type: 'worker_internal_error', payload });
   event.preventDefault();
 });
 
 ctx.addEventListener('unhandledrejection', (event) => {
-  const reason = event.reason || {};
-  const payload = {
-    message: typeof reason === 'string' ? reason : reason.message || 'Unhandled rejection in worker',
-    stack: reason && reason.stack ? reason.stack : undefined,
-  };
+  const payload: SerializedWorkerError = serializeError(event.reason ?? 'Unhandled rejection in worker');
   ctx.postMessage({ id: -1, type: 'worker_internal_error', payload });
   event.preventDefault();
 });
 
 // --- Existing BNGL worker implementation (migrated from String.raw) ---
 
-function parseBNGL(bnglCode: string): BNGLModel {
+function parseBNGL(jobId: number, bnglCode: string): BNGLModel {
   const model: BNGLModel = {
     parameters: {},
     moleculeTypes: [],
@@ -45,7 +102,7 @@ function parseBNGL(bnglCode: string): BNGLModel {
     reactionRules: [],
   };
 
-  const getBlockContent = (blockName: string, code: string) => {
+  const getBlockContent = (jobId: number, blockName: string, code: string) => {
     const escapeRegex = (value: string) => {
       const ESCAPE_CODES: Record<number, true> = {
         92: true,
@@ -84,6 +141,7 @@ function parseBNGL(bnglCode: string): BNGLModel {
     let inBlock = false;
 
     for (const rawLine of lines) {
+      ensureNotCancelled(jobId);
       const lineWithoutComments = rawLine.split('#')[0];
       if (!inBlock) {
         if (beginPattern.test(lineWithoutComments)) {
@@ -148,9 +206,10 @@ function parseBNGL(bnglCode: string): BNGLModel {
     return parts;
   };
 
-  const paramsContent = getBlockContent('parameters', bnglCode);
+  const paramsContent = getBlockContent(jobId, 'parameters', bnglCode);
   if (paramsContent) {
-    paramsContent.split(/\r?\n/).forEach((line) => {
+    for (const line of paramsContent.split(/\r?\n/)) {
+      ensureNotCancelled(jobId);
       const cleaned = cleanLine(line);
       if (cleaned) {
         const parts = cleaned.split(/\s+/);
@@ -158,12 +217,13 @@ function parseBNGL(bnglCode: string): BNGLModel {
           model.parameters[parts[0]] = parseFloat(parts[1]);
         }
       }
-    });
+    }
   }
 
-  const molTypesContent = getBlockContent('molecule types', bnglCode);
+  const molTypesContent = getBlockContent(jobId, 'molecule types', bnglCode);
   if (molTypesContent) {
-    molTypesContent.split(/\r?\n/).forEach((line) => {
+    for (const line of molTypesContent.split(/\r?\n/)) {
+      ensureNotCancelled(jobId);
       const cleaned = cleanLine(line);
       if (cleaned) {
         const match = cleaned.match(/(\w+)\((.*?)\)/);
@@ -175,12 +235,13 @@ function parseBNGL(bnglCode: string): BNGLModel {
           model.moleculeTypes.push({ name: cleaned, components: [] });
         }
       }
-    });
+    }
   }
 
-  const speciesContent = getBlockContent('seed species', bnglCode);
+  const speciesContent = getBlockContent(jobId, 'seed species', bnglCode);
   if (speciesContent) {
-    speciesContent.split(/\r?\n/).forEach((line) => {
+    for (const line of speciesContent.split(/\r?\n/)) {
+      ensureNotCancelled(jobId);
       const cleaned = cleanLine(line);
       if (cleaned) {
         const parts = cleaned.split(/\s+/);
@@ -197,12 +258,13 @@ function parseBNGL(bnglCode: string): BNGLModel {
           model.species.push({ name, initialConcentration: concentration });
         }
       }
-    });
+    }
   }
 
-  const observablesContent = getBlockContent('observables', bnglCode);
+  const observablesContent = getBlockContent(jobId, 'observables', bnglCode);
   if (observablesContent) {
-    observablesContent.split(/\r?\n/).forEach((line) => {
+    for (const line of observablesContent.split(/\r?\n/)) {
+      ensureNotCancelled(jobId);
       const cleaned = cleanLine(line);
       if (cleaned) {
         const parts = cleaned.split(/\s+/);
@@ -210,17 +272,18 @@ function parseBNGL(bnglCode: string): BNGLModel {
           model.observables.push({ name: parts[1], pattern: parts.slice(2).join(' ') });
         }
       }
-    });
+    }
   }
 
-  const rulesContent = getBlockContent('reaction rules', bnglCode);
+  const rulesContent = getBlockContent(jobId, 'reaction rules', bnglCode);
   if (rulesContent) {
     const statements: string[] = [];
     let current = '';
 
-    rulesContent.split(/\r?\n/).forEach((line) => {
+    for (const line of rulesContent.split(/\r?\n/)) {
+      ensureNotCancelled(jobId);
       const cleaned = cleanLine(line);
-      if (!cleaned) return;
+      if (!cleaned) continue;
 
       if (cleaned.endsWith('\\')) {
         current += cleaned.slice(0, -1).trim() + ' ';
@@ -229,13 +292,14 @@ function parseBNGL(bnglCode: string): BNGLModel {
         statements.push(current.trim());
         current = '';
       }
-    });
+    }
 
     if (current.trim()) {
       statements.push(current.trim());
     }
 
     statements.forEach((statement) => {
+      ensureNotCancelled(jobId);
       let ruleLine = statement;
       const labelMatch = ruleLine.match(/^[^:]+:\s*(.*)$/);
       if (labelMatch) {
@@ -322,7 +386,7 @@ function parseBNGL(bnglCode: string): BNGLModel {
   return model;
 }
 
-function generateNetwork(inputModel: BNGLModel): BNGLModel {
+function generateNetwork(jobId: number, inputModel: BNGLModel): BNGLModel {
   const model: BNGLModel = JSON.parse(JSON.stringify(inputModel));
 
   const trim = (value: string | undefined) => (typeof value === 'string' ? value.trim() : '');
@@ -513,10 +577,12 @@ function generateNetwork(inputModel: BNGLModel): BNGLModel {
   let speciesAdded = true;
 
   while (speciesAdded) {
+    ensureNotCancelled(jobId);
     speciesAdded = false;
     const speciesArray = Array.from(speciesMap.values());
 
-    rules.forEach((rule) => {
+    for (const rule of rules) {
+      ensureNotCancelled(jobId);
       const reactantMatches = rule.reactants.map((reactantPattern) => {
         const matches = speciesArray.filter((species) => patternMatchesSpecies(reactantPattern, species.name));
         if (matches.length === 0 && (reactantPattern.includes('!') || reactantPattern.includes('.'))) {
@@ -526,12 +592,13 @@ function generateNetwork(inputModel: BNGLModel): BNGLModel {
       });
 
       if (reactantMatches.some((match) => match.length === 0)) {
-        return;
+        continue;
       }
 
       const combinations = generateCombinations(reactantMatches);
 
       combinations.forEach((reactantSpecies) => {
+        ensureNotCancelled(jobId);
         const concreteReaction = {
           reactants: reactantSpecies.map((species) => species.name),
           products: rule.products.map((productPattern) => {
@@ -623,7 +690,7 @@ function generateNetwork(inputModel: BNGLModel): BNGLModel {
           }
         });
       });
-    });
+    }
   }
 
   model.reactions = Array.from(expandedReactionMap.values());
@@ -631,7 +698,8 @@ function generateNetwork(inputModel: BNGLModel): BNGLModel {
 
   const speciesList = model.species.map((species) => species.name);
 
-  model.reactions.forEach((reaction) => {
+  for (const reaction of model.reactions) {
+    ensureNotCancelled(jobId);
     reaction.reactants = reaction.reactants.map((reactant) => {
       const completed = completeSpeciesName(reactant);
       if (speciesList.includes(completed)) return completed;
@@ -650,30 +718,33 @@ function generateNetwork(inputModel: BNGLModel): BNGLModel {
       }
       return product;
     });
-  });
+  }
 
   const allProductSpecies = new Set<string>();
-  model.reactions.forEach((reaction) => {
+  for (const reaction of model.reactions) {
+    ensureNotCancelled(jobId);
     reaction.products.forEach((product) => {
       const completed = completeSpeciesName(product);
       allProductSpecies.add(completed);
       reaction.products = reaction.products.map((existingProduct) => (existingProduct === product ? completed : existingProduct));
     });
-  });
+  }
 
   const speciesNames = new Set(model.species.map((species) => species.name));
-  allProductSpecies.forEach((name) => {
+  for (const name of allProductSpecies) {
+    ensureNotCancelled(jobId);
     if (!speciesNames.has(name)) {
       model.species.push({ name, initialConcentration: 0 });
       speciesNames.add(name);
     }
-  });
+  }
 
   return model;
 }
 
-function simulate(inputModel: BNGLModel, options: SimulationOptions): SimulationResults {
-  const expandedModel = generateNetwork(inputModel);
+function simulate(jobId: number, inputModel: BNGLModel, options: SimulationOptions): SimulationResults {
+  ensureNotCancelled(jobId);
+  const expandedModel = generateNetwork(jobId, inputModel);
   const model: BNGLModel = JSON.parse(JSON.stringify(expandedModel));
 
   const { t_end, n_steps, method } = options;
@@ -682,12 +753,15 @@ function simulate(inputModel: BNGLModel, options: SimulationOptions): Simulation
   const headers = ['time', ...model.observables.map((observable) => observable.name)];
 
   const evaluateObservables = (concs: Record<string, number>) => {
+    ensureNotCancelled(jobId);
     const obsValues: Record<string, number> = {};
-    model.observables.forEach((obs) => {
+    for (const obs of model.observables) {
+      ensureNotCancelled(jobId);
       let total = 0;
       const pattern = obs.pattern.trim();
 
       for (const [speciesName, concentration] of Object.entries(concs)) {
+        ensureNotCancelled(jobId);
         const speciesStr = speciesName.trim();
 
         if (speciesStr === pattern) {
@@ -781,7 +855,7 @@ function simulate(inputModel: BNGLModel, options: SimulationOptions): Simulation
       }
 
       obsValues[obs.name] = total;
-    });
+    }
     return obsValues;
   };
 
@@ -799,17 +873,20 @@ function simulate(inputModel: BNGLModel, options: SimulationOptions): Simulation
     data.push({ time: t, ...evaluateObservables(counts) });
 
     while (t < t_end) {
-      const propensities = model.reactions.map((reaction) => {
+      ensureNotCancelled(jobId);
+      const propensities: number[] = [];
+      for (const reaction of model.reactions) {
+        ensureNotCancelled(jobId);
         let a = reaction.rateConstant;
-        reaction.reactants.forEach((reactant) => {
+        for (const reactant of reaction.reactants) {
           const count = counts[reactant];
           if (count === undefined) {
             console.warn('[SSA] Missing reactant in counts:', reactant, 'Available:', Object.keys(counts));
           }
           a *= count || 0;
-        });
-        return a;
-      });
+        }
+        propensities.push(a);
+      }
 
       const aTotal = propensities.reduce((sum, a) => sum + a, 0);
       if (aTotal === 0) {
@@ -825,6 +902,7 @@ function simulate(inputModel: BNGLModel, options: SimulationOptions): Simulation
       let sumA = 0;
       let reactionIndex = propensities.length - 1;
       for (let j = 0; j < propensities.length; j += 1) {
+        ensureNotCancelled(jobId);
         sumA += propensities[j];
         if (r2 <= sumA) {
           reactionIndex = j;
@@ -833,22 +911,24 @@ function simulate(inputModel: BNGLModel, options: SimulationOptions): Simulation
       }
 
       const firedReaction = model.reactions[reactionIndex];
-      firedReaction.reactants.forEach((reactant) => {
+      for (const reactant of firedReaction.reactants) {
         const before = counts[reactant] || 0;
         counts[reactant] = before - 1;
-      });
-      firedReaction.products.forEach((product) => {
+      }
+      for (const product of firedReaction.products) {
         const before = counts[product] || 0;
         counts[product] = before + 1;
-      });
+      }
 
       while (t >= nextTOut && nextTOut <= t_end) {
+        ensureNotCancelled(jobId);
         data.push({ time: Math.round(nextTOut * 1e10) / 1e10, ...evaluateObservables(counts) });
         nextTOut += dtOut;
       }
     }
 
     while (nextTOut <= t_end) {
+      ensureNotCancelled(jobId);
       data.push({ time: Math.round(nextTOut * 1e10) / 1e10, ...evaluateObservables(counts) });
       nextTOut += dtOut;
     }
@@ -859,7 +939,10 @@ function simulate(inputModel: BNGLModel, options: SimulationOptions): Simulation
   if (method === 'ode') {
     let y = model.species.map((s) => s.initialConcentration);
 
+    const checkCancelled = () => ensureNotCancelled(jobId);
+
     const matchSpeciesPattern = (pattern: string, speciesName: string) => {
+      checkCancelled();
       if (pattern === speciesName) return true;
 
       const splitComponents = (input: string) =>
@@ -922,6 +1005,7 @@ function simulate(inputModel: BNGLModel, options: SimulationOptions): Simulation
     };
 
     const derivatives = (yIn: number[], logStep?: boolean) => {
+      checkCancelled();
       const rates: Record<string, number> = {};
       speciesNames.forEach((name, i) => {
         rates[name] = yIn[i];
@@ -929,6 +1013,7 @@ function simulate(inputModel: BNGLModel, options: SimulationOptions): Simulation
       const dydt = new Array<number>(speciesNames.length).fill(0);
 
       model.reactions.forEach((reaction) => {
+        checkCancelled();
         const hasExactMatch = reaction.reactants.every((reactant) => speciesNames.includes(reactant));
 
         if (hasExactMatch) {
@@ -1000,6 +1085,7 @@ function simulate(inputModel: BNGLModel, options: SimulationOptions): Simulation
     };
 
     const rk4Step = (yCurr: number[], h: number, logStep?: boolean) => {
+      checkCancelled();
       const k1 = derivatives(yCurr, logStep);
       const yK1 = yCurr.map((yi, i) => yi + 0.5 * h * k1[i]);
       const k2 = derivatives(yK1);
@@ -1027,6 +1113,7 @@ function simulate(inputModel: BNGLModel, options: SimulationOptions): Simulation
     let shouldStop = false;
 
     for (let i = 1; i <= n_steps && !shouldStop; i += 1) {
+      checkCancelled();
       const tTarget = i * dtOut;
       const maxRate = model.reactions.reduce((max, rxn) => Math.max(max, rxn.rateConstant || 0), 0);
 
@@ -1037,6 +1124,7 @@ function simulate(inputModel: BNGLModel, options: SimulationOptions): Simulation
       let firstSubstep = true;
 
       while (localTime < tTarget - 1e-12) {
+        checkCancelled();
         let stepSize = Math.min(baseStep, tTarget - localTime);
         let attempts = 0;
         let nextY: number[] | null = null;
@@ -1044,6 +1132,7 @@ function simulate(inputModel: BNGLModel, options: SimulationOptions): Simulation
         const overflowThreshold = 1e12;
 
         while (attempts < maxAdaptiveAttempts) {
+          checkCancelled();
           const candidate = rk4Step(y, stepSize, firstSubstep && attempts === 0);
 
           const hasOverflow = candidate.some((val) => !Number.isFinite(val) || Math.abs(val) > overflowThreshold);
@@ -1103,26 +1192,161 @@ function simulate(inputModel: BNGLModel, options: SimulationOptions): Simulation
 }
 
 ctx.addEventListener('message', (event: MessageEvent<WorkerRequest>) => {
-  const { id, type, payload } = event.data;
-
-  try {
-    if (type === 'parse') {
-      const model = parseBNGL(payload as string);
-      const response: WorkerResponse<BNGLModel> = { id, type: 'parse_success', payload: model };
-      ctx.postMessage(response);
-    } else if (type === 'simulate') {
-      const { model, options } = payload as { model: BNGLModel; options: SimulationOptions };
-      const results = simulate(model, options);
-      const response: WorkerResponse<SimulationResults> = { id, type: 'simulate_success', payload: results };
-      ctx.postMessage(response);
-    } else {
-      throw new Error(`Unknown worker message type: ${type}`);
-    }
-  } catch (error) {
-    const err = error instanceof Error ? error : new Error(String(error));
-    const response: WorkerResponse = { id, type: `${type}_error`, payload: { message: err.message } };
-    ctx.postMessage(response);
+  const message = event.data;
+  if (!message || typeof message !== 'object') {
+    console.warn('[Worker] Received malformed message', message);
+    return;
   }
+
+  const { id, type, payload } = message;
+
+  if (typeof id !== 'number' || typeof type !== 'string') {
+    console.warn('[Worker] Missing id or type on message', message);
+    return;
+  }
+
+  if (type === 'cancel') {
+    const targetId = payload && typeof payload === 'object' ? (payload as { targetId?: unknown }).targetId : undefined;
+    if (typeof targetId === 'number') {
+      cancelJob(targetId);
+    }
+    return;
+  }
+
+  if (type === 'parse') {
+    registerJob(id);
+    try {
+      const code = typeof payload === 'string' ? payload : '';
+      const model = parseBNGL(id, code);
+      const response: WorkerResponse = { id, type: 'parse_success', payload: model };
+      ctx.postMessage(response);
+    } catch (error) {
+      const response: WorkerResponse = { id, type: 'parse_error', payload: serializeError(error) };
+      ctx.postMessage(response);
+    } finally {
+      markJobComplete(id);
+    }
+    return;
+  }
+
+  if (type === 'simulate') {
+    registerJob(id);
+    try {
+      if (!payload || typeof payload !== 'object') {
+        throw new Error('Simulation payload missing');
+      }
+
+      // Backwards-compatible: payload can be { model, options } or { modelId, parameterOverrides?, options }
+      const p = payload as any;
+      let model: BNGLModel | undefined = undefined;
+      const options: SimulationOptions | undefined = p.options;
+
+      if (p.model) {
+        model = p.model as BNGLModel;
+      } else if (typeof p.modelId === 'number') {
+        const cached = cachedModels.get(p.modelId);
+        if (!cached) throw new Error('Cached model not found in worker');
+        // mark as recently used
+        touchCachedModel(p.modelId);
+        // If there are parameter overrides, create a shallow copy and update rate constants
+        if (!p.parameterOverrides || Object.keys(p.parameterOverrides).length === 0) {
+          model = cached;
+        } else {
+          const overrides: Record<string, number> = p.parameterOverrides;
+          const nextModel: BNGLModel = {
+            ...cached,
+            parameters: { ...(cached.parameters || {}), ...overrides },
+            reactions: [],
+          } as BNGLModel;
+
+          // Update reaction rate constants using new parameters
+          (cached.reactions || []).forEach((r) => {
+            const rateConst = nextModel.parameters[r.rate] ?? parseFloat(r.rate as unknown as string);
+            nextModel.reactions.push({ ...r, rateConstant: rateConst });
+          });
+          model = nextModel;
+        }
+      }
+
+      if (!model || !options) {
+        throw new Error('Simulation payload incomplete');
+      }
+
+      const results = simulate(id, model, options);
+      const response: WorkerResponse = { id, type: 'simulate_success', payload: results };
+      ctx.postMessage(response);
+    } catch (error) {
+      const response: WorkerResponse = { id, type: 'simulate_error', payload: serializeError(error) };
+      ctx.postMessage(response);
+    } finally {
+      markJobComplete(id);
+    }
+    return;
+  }
+
+  if (type === 'cache_model') {
+    registerJob(id);
+    try {
+      const p = payload as any;
+      const model = p && p.model ? (p.model as BNGLModel) : undefined;
+      if (!model) throw new Error('Cache model payload missing');
+      const modelId = nextModelId++;
+      // Store a shallow clone to avoid accidental mutation from main thread
+      const stored: BNGLModel = {
+        ...model,
+        parameters: { ...(model.parameters || {}) },
+        moleculeTypes: (model.moleculeTypes || []).map((m) => ({ ...m })),
+        species: (model.species || []).map((s) => ({ ...s })),
+        observables: (model.observables || []).map((o) => ({ ...o })),
+        reactions: (model.reactions || []).map((r) => ({ ...r })),
+        reactionRules: (model.reactionRules || []).map((r) => ({ ...r })),
+      };
+      cachedModels.set(modelId, stored);
+      // Enforce LRU eviction if we exceed the cache size
+      try {
+        if (cachedModels.size > MAX_CACHED_MODELS) {
+          const it = cachedModels.keys();
+          const oldest = it.next().value as number | undefined;
+          if (typeof oldest === 'number') {
+            cachedModels.delete(oldest);
+            // best-effort notification
+            // eslint-disable-next-line no-console
+            console.warn('[Worker] Evicted cached model (LRU) id=', oldest);
+          }
+        }
+      } catch (e) {
+        // ignore eviction errors
+      }
+      const response: WorkerResponse = { id, type: 'cache_model_success', payload: { modelId } };
+      ctx.postMessage(response);
+    } catch (error) {
+      const response: WorkerResponse = { id, type: 'cache_model_error', payload: serializeError(error) };
+      ctx.postMessage(response);
+    } finally {
+      markJobComplete(id);
+    }
+    return;
+  }
+
+  if (type === 'release_model') {
+    registerJob(id);
+    try {
+      const p = payload as any;
+      const modelId = p && typeof p === 'object' ? (p as { modelId?: unknown }).modelId : undefined;
+      if (typeof modelId !== 'number') throw new Error('release_model payload missing modelId');
+      const existed = cachedModels.delete(modelId);
+      const response: WorkerResponse = { id, type: 'release_model_success', payload: { modelId } };
+      ctx.postMessage(response);
+    } catch (error) {
+      const response: WorkerResponse = { id, type: 'release_model_error', payload: serializeError(error) };
+      ctx.postMessage(response);
+    } finally {
+      markJobComplete(id);
+    }
+    return;
+  }
+
+  console.warn('[Worker] Unknown message type received:', type);
 });
 
 export {};

@@ -64,15 +64,28 @@ export interface SimulationOptions {
   steadyStateWindow?: number;
 }
 
-// Worker message contracts
-export interface WorkerRequest<T = any> {
-  id?: number;
-  type: string;
-  payload?: T;
+export interface SerializedWorkerError {
+  name?: string;
+  message: string;
+  stack?: string;
+  details?: Record<string, unknown>;
 }
 
-export interface WorkerResponse<T = any> {
-  id?: number;
-  type: string;
-  payload?: T;
-}
+export type WorkerRequest =
+  | { id: number; type: 'parse'; payload: string }
+  | { id: number; type: 'simulate'; payload: { model: BNGLModel; options: SimulationOptions } }
+  | { id: number; type: 'cache_model'; payload: { model: BNGLModel } }
+  | { id: number; type: 'release_model'; payload: { modelId: number } }
+  | { id: number; type: 'simulate'; payload: { modelId: number; parameterOverrides?: Record<string, number>; options: SimulationOptions } }
+  | { id: number; type: 'cancel'; payload: { targetId: number } };
+
+export type WorkerResponse =
+  | { id: number; type: 'parse_success'; payload: BNGLModel }
+  | { id: number; type: 'parse_error'; payload: SerializedWorkerError }
+  | { id: number; type: 'simulate_success'; payload: SimulationResults }
+  | { id: number; type: 'cache_model_success'; payload: { modelId: number } }
+  | { id: number; type: 'cache_model_error'; payload: SerializedWorkerError }
+  | { id: number; type: 'release_model_success'; payload: { modelId: number } }
+  | { id: number; type: 'release_model_error'; payload: SerializedWorkerError }
+  | { id: number; type: 'simulate_error'; payload: SerializedWorkerError }
+  | { id: -1; type: 'worker_internal_error'; payload: SerializedWorkerError };

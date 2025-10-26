@@ -8,10 +8,11 @@ import { InfoIcon } from '../icons/InfoIcon';
 interface SteadyStateTabProps {
   model: BNGLModel | null;
   onSimulate: (options: SimulationOptions) => void;
+  onCancelSimulation: () => void;
   isSimulating: boolean;
 }
 
-export const SteadyStateTab: React.FC<SteadyStateTabProps> = ({ model, onSimulate, isSimulating }) => {
+export const SteadyStateTab: React.FC<SteadyStateTabProps> = ({ model, onSimulate, onCancelSimulation, isSimulating }) => {
 
   if (!model) {
     return <div className="text-slate-500 dark:text-slate-400">Parse a model to run a steady-state analysis.</div>;
@@ -37,11 +38,16 @@ export const SteadyStateTab: React.FC<SteadyStateTabProps> = ({ model, onSimulat
         </p>
       </div>
 
-       <div className="mt-6">
+       <div className="mt-6 flex gap-2">
            <Button onClick={handleRun} disabled={isSimulating}>
                 {isSimulating && <LoadingSpinner className="w-4 h-4 mr-2" />}
-                Run to Steady State
+                {isSimulating ? 'Running…' : 'Run to Steady State'}
            </Button>
+           {isSimulating && (
+             <Button variant="danger" onClick={onCancelSimulation}>
+               Cancel
+             </Button>
+           )}
        </div>
     </div>
   );

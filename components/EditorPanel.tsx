@@ -13,6 +13,7 @@ interface EditorPanelProps {
   onCodeChange: (code: string) => void;
   onParse: () => void;
   onSimulate: (options: SimulationOptions) => void;
+  onCancelSimulation: () => void;
   isSimulating: boolean;
   modelExists: boolean;
 }
@@ -22,6 +23,7 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
   onCodeChange,
   onParse,
   onSimulate,
+  onCancelSimulation,
   isSimulating,
   modelExists,
 }) => {
@@ -92,6 +94,11 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
                   {isSimulating && <LoadingSpinner className="w-4 h-4 mr-2" />}
                   {isSimulating ? 'Simulating...' : 'Run Simulation'}
                 </Button>
+                {isSimulating && (
+                  <Button variant="danger" onClick={onCancelSimulation}>
+                    Cancel
+                  </Button>
+                )}
             </div>
         </div>
       </div>

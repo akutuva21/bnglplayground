@@ -84,6 +84,57 @@ npm run test
 - [ ] Extend structural analysis tooling with conservation law reporting
 - [ ] Polish rule cartoon renderer with binding/state glyphs
 
+## Identifiability analysis (FIM)
+
+This project includes a Fisher Information Matrix (FIM) based identifiability analysis built into the UI. It computes parameter sensitivities using central finite differences, assembles the FIM, and performs eigen-decomposition to report practical identifiability diagnostics.
+
+Quick example (browser/console usage):
+
+```typescript
+import { computeFIM, exportFIM } from './services/fim';
+
+// model: BNGLModel loaded from the editor
+// selectedParams: string[] of parameter names to analyze
+const result = await computeFIM(
+	model,
+	selectedParams,
+	{ method: 'ode', t_end: 50, n_steps: 100 },
+	undefined, // optional AbortSignal
+	(cur, tot) => console.log(`Progress: ${cur}/${tot}`),
+	true, // includeAllTimepoints
+	false, // useLogParameters
+	true, // approxProfile (run cheap profile scans)
+	false // approxProfileReopt
+);
+
+console.log('Identifiable parameters:', result.identifiableParams);
+console.log('Unidentifiable parameters:', result.unidentifiableParams);
+console.log('High VIF parameters (multicollinearity):', result.highVIFParams);
+
+// Export JSON for external validation
+const exportData = exportFIM(result);
+// download helper
+function downloadJSON(obj: any, filename = 'fim_analysis.json') {
+	const blob = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' });
+	const url = URL.createObjectURL(blob);
+	const a = document.createElement('a');
+	a.href = url;
+	a.download = filename;
+	document.body.appendChild(a);
+	a.click();
+	a.remove();
+	URL.revokeObjectURL(url);
+}
+downloadJSON(exportData);
+```
+
+Interpretation notes:
+
+- Condition number: large values (>>1e4) indicate an ill-conditioned FIM and potential practical non-identifiability.
+- VIF &gt; 10 indicates strong multicollinearity between parameters.
+- The UI shows `identifiableParams` and `unidentifiableParams` as badges, and profile plots include approximate 95% confidence intervals (χ², df=1) computed on the grid.
+
+
 ## Acknowledgements
 
 - Built on top of the BioNetGen rule-based modeling paradigm
