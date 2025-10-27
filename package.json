@@ -12,7 +12,6 @@
   "dependencies": {
     "allotment": "^1.20.2",
     "cytoscape": "^3.33.1",
-    "cytoscape-cola": "^2.5.1",
     "cytoscape-cose-bilkent": "^4.1.0",
     "d3": "^7.9.0",
   "ml-matrix": "^6.8.0",
