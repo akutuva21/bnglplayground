@@ -13,6 +13,9 @@ export default defineConfig(() => {
       },
       base: '/bnglplayground/',
       plugins: [react()],
+      optimizeDeps: {
+        include: ['react', 'react-dom', 'recharts', 'cytoscape', 'cytoscape-cose-bilkent', 'd3']
+      },
       resolve: {
         alias: {
           '@': path.resolve(__dirname, '.'),
