@@ -14,7 +14,8 @@ export default defineConfig(() => {
       base: '/bnglplayground/',
       plugins: [react()],
       optimizeDeps: {
-        include: ['react', 'react-dom', 'recharts', 'cytoscape', 'cytoscape-cose-bilkent', 'd3']
+        include: ['react', 'react-dom', 'recharts', 'cytoscape', 'cytoscape-cose-bilkent', 'd3', 'use-resize-observer'],
+        force: true
       },
       resolve: {
         alias: {
@@ -22,6 +23,11 @@ export default defineConfig(() => {
         }
       },
       build: {
+        // Ensure Rollup/Vite converts mixed CJS/UMD modules to ESM during the build
+        commonjsOptions: {
+          transformMixedEsModules: true,
+          requireReturnsDefault: 'auto'
+        },
         rollupOptions: {
           output: {
             manualChunks(id: string) {
