@@ -14,37 +14,34 @@ export default defineConfig(() => {
       base: '/bnglplayground/',
       plugins: [react()],
       optimizeDeps: {
-        include: ['react', 'react-dom', 'recharts', 'cytoscape', 'cytoscape-cose-bilkent', 'd3', 'use-resize-observer'],
+        include: [
+          'react',
+          'react-dom',
+          'scheduler',
+          'react-is',
+          'recharts',
+          'cytoscape',
+          'cytoscape-cose-bilkent',
+          'd3'
+        ],
         force: true
       },
       resolve: {
         alias: {
           '@': path.resolve(__dirname, '.'),
-        }
+        },
+        // Avoid duplicate React copies in the bundle
+        dedupe: ['react', 'react-dom']
       },
       build: {
         // Ensure Rollup/Vite converts mixed CJS/UMD modules to ESM during the build
         commonjsOptions: {
           transformMixedEsModules: true,
-          requireReturnsDefault: 'auto'
+          requireReturnsDefault: 'auto' as const
         },
-        rollupOptions: {
-            output: {
-            manualChunks(id: string) {
-              if (!id) return undefined;
-              if (id.includes('node_modules')) {
-                if (id.includes('recharts')) return 'vendor_recharts';
-                // Ensure cytoscape and its extensions (cose-bilkent, cola, etc.) are grouped together
-                if (id.includes('cytoscape-cose-bilkent') || id.includes('cytoscape')) return 'vendor_cytoscape';
-                if (id.includes('ml-matrix')) return 'vendor_ml_matrix';
-                if (id.includes('d3')) return 'vendor_d3';
-                if (id.includes('monaco-editor') || id.includes('monaco')) return 'vendor_monaco';
-                return 'vendor_misc';
-              }
-              return undefined;
-            },
-          },
-        },
+        // Intentionally remove manualChunks to let Vite/Rollup decide chunking.
+        // This prevents a brittle catch-all `vendor_misc` that can mix UMD wrappers
+        // with ESM bundles and produce runtime `exports`/`n` undefined errors.
       },
       test: {
         environment: 'node',
