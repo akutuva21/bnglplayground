@@ -12,7 +12,7 @@ import { LoadingSpinner } from './ui/LoadingSpinner';
 
 cytoscape.use(coseBilkent);
 
-type LayoutName = 'cose' | 'cola' | 'circle' | 'grid';
+type LayoutName = 'cose' | 'circle' | 'grid';
 type ColorMode = 'default' | 'moleculeType' | 'concentration';
 type EdgeMode = 'uniform' | 'rate';
 
@@ -241,7 +241,7 @@ export const NetworkGraph: React.FC<NetworkGraphProps> = ({ model, results }) =>
     
     // Run layout asynchronously so the spinner can render and the UI stays responsive
     if (isMountedRef.current) setLoading(true);
-    const layoutOptions = { name: layout === 'cose' || layout === 'cola' ? 'cose-bilkent' : layout, animate: true, animationDuration: 500, padding: 30, nodeRepulsion: 4500, idealEdgeLength: 100, edgeLength: 120 } as any;
+    const layoutOptions = { name: layout === 'cose' ? 'cose-bilkent' : layout, animate: true, animationDuration: 500, padding: 30, nodeRepulsion: 4500, idealEdgeLength: 100, edgeLength: 120 } as any;
     const layoutInstance = cy.layout(layoutOptions);
     const onLayoutStop = () => {
       if (!isMountedRef.current) return;
@@ -274,8 +274,8 @@ export const NetworkGraph: React.FC<NetworkGraphProps> = ({ model, results }) =>
             <div className="flex items-center gap-2">
                 <span className="text-sm font-medium">Layout:</span>
                 <Button variant={layout === 'cose' ? 'secondary' : 'ghost'} onClick={() => setLayout('cose')} className="text-xs px-2 py-1">Cose</Button>
-                <Button variant={layout === 'cola' ? 'secondary' : 'ghost'} onClick={() => setLayout('cola')} className="text-xs px-2 py-1">Cola</Button>
                 <Button variant={layout === 'circle' ? 'secondary' : 'ghost'} onClick={() => setLayout('circle')} className="text-xs px-2 py-1">Circle</Button>
+                <Button variant={layout === 'grid' ? 'secondary' : 'ghost'} onClick={() => setLayout('grid')} className="text-xs px-2 py-1">Grid</Button>
             </div>
              <div className="flex items-center gap-2">
                 <span className="text-sm font-medium">Node Color:</span>
