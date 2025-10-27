@@ -9,6 +9,7 @@ import { Button } from './ui/Button';
 import { Tooltip } from './ui/Tooltip';
 import { Input } from './ui/Input';
 import { SearchIcon } from './icons/SearchIcon';
+import { LoadingSpinner } from './ui/LoadingSpinner';
 
 cytoscape.use(cola);
 cytoscape.use(coseBilkent);
@@ -47,6 +48,8 @@ export const NetworkGraph: React.FC<NetworkGraphProps> = ({ model, results }) =>
   const [concRange, setConcRange] = useState<{min: number, max: number} | null>(null);
   const [tooltip, setTooltip] = useState<{content: string, x: number, y: number} | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
+  const [loading, setLoading] = useState(false);
+  const isMountedRef = useRef(false);
 
   const modelDerivedData = useMemo(() => {
     if (!model) return null;
@@ -93,11 +96,15 @@ export const NetworkGraph: React.FC<NetworkGraphProps> = ({ model, results }) =>
   };
 
   useEffect(() => {
-    if (!model || !containerRef.current) {
-        cyRef.current?.destroy();
-        cyRef.current = null;
-        return;
-    }
+  isMountedRef.current = true;
+
+  if (!model || !containerRef.current) {
+    // mark unmounted before destroying
+    isMountedRef.current = false;
+    cyRef.current?.destroy();
+    cyRef.current = null;
+    return;
+  }
 
     const elements = model.species.map(s => ({
         data: { id: s.name, label: s.name.replace(/\./g, '.\n') },
@@ -119,7 +126,7 @@ export const NetworkGraph: React.FC<NetworkGraphProps> = ({ model, results }) =>
       style: [
         {
           selector: 'node',
-          style: {
+            style: {
             'label': 'data(label)',
             'color': 'white',
             'text-outline-color': '#333',
@@ -129,11 +136,11 @@ export const NetworkGraph: React.FC<NetworkGraphProps> = ({ model, results }) =>
             'width': 60, 'height': 60,
             'text-wrap': 'wrap',
             // FIX: The type definition for 'text-max-width' expects a string, so the number has been converted to a string.
-            'text-max-width': '80',
+            'text-max-width': '80px',
             'border-width': 0, 'border-color': '#f97316',
             'transition-property': 'background-color, opacity, border-width',
             // FIX: Changed string value with units to a number to avoid potential type errors.
-            'transition-duration': 0.3,
+            'transition-duration': 300,
           }
         },
         {
@@ -143,7 +150,7 @@ export const NetworkGraph: React.FC<NetworkGraphProps> = ({ model, results }) =>
             'target-arrow-shape': 'triangle', 'curve-style': 'bezier',
             'transition-property': 'width, line-color, target-arrow-color, opacity',
             // FIX: Changed string value with units to a number to avoid potential type errors.
-            'transition-duration': 0.3,
+            'transition-duration': 300,
           }
         }
       ],
@@ -151,20 +158,18 @@ export const NetworkGraph: React.FC<NetworkGraphProps> = ({ model, results }) =>
 
     const cy = cyRef.current;
 
-    cy.on('tap', 'node', (event) => {
-        const node = event.target;
-        // FIX: The 'transition' method does not exist on Cytoscape collections. Use 'animate' instead.
-        cy.elements().animate({ style: { 'opacity': 0.2 }, duration: 200 });
-        // FIX: The 'transition' method does not exist on Cytoscape collections. Use 'animate' instead.
-        node.neighborhood().add(node).animate({ style: { 'opacity': 1 }, duration: 200 });
-    });
+  cy.on('tap', 'node', (event) => {
+    const node = event.target;
+    // Use direct style updates for instant changes to opacity
+    cy.elements().style('opacity', 0.2);
+    node.neighborhood().add(node).style('opacity', 1);
+  });
 
-    cy.on('tap', (event) => {
-        if (event.target === cy) {
-            // FIX: The 'transition' method does not exist on Cytoscape collections. Use 'animate' instead.
-            cy.elements().animate({ style: { 'opacity': 1 }, duration: 200 });
-        }
-    });
+  cy.on('tap', (event) => {
+    if (event.target === cy) {
+      cy.elements().style('opacity', 1);
+    }
+  });
 
     cy.on('mouseover', 'node, edge', (event) => {
         const target = event.target;
@@ -175,10 +180,11 @@ export const NetworkGraph: React.FC<NetworkGraphProps> = ({ model, results }) =>
     cy.on('drag', 'node', () => setTooltip(null));
     cy.on('zoom pan', () => setTooltip(null));
 
-    return () => {
-        cyRef.current?.destroy();
-        cyRef.current = null;
-    };
+  return () => {
+    isMountedRef.current = false;
+    cyRef.current?.destroy();
+    cyRef.current = null;
+  };
   }, [model]);
 
   useEffect(() => {
@@ -235,7 +241,25 @@ export const NetworkGraph: React.FC<NetworkGraphProps> = ({ model, results }) =>
       cy.edges().style('width', 2);
     }
     
-    cy.layout({ name: layout === 'cose' ? 'cose-bilkent' : layout, animate: true, animationDuration: 500, padding: 30, nodeRepulsion: 4500, idealEdgeLength: 100, edgeLength: 120 } as any).run();
+    // Run layout asynchronously so the spinner can render and the UI stays responsive
+    if (isMountedRef.current) setLoading(true);
+    const layoutOptions = { name: layout === 'cose' ? 'cose-bilkent' : layout, animate: true, animationDuration: 500, padding: 30, nodeRepulsion: 4500, idealEdgeLength: 100, edgeLength: 120 } as any;
+    const layoutInstance = cy.layout(layoutOptions);
+    const onLayoutStop = () => {
+      if (!isMountedRef.current) return;
+      setLoading(false);
+      layoutInstance.removeListener('layoutstop', onLayoutStop);
+    };
+    layoutInstance.on('layoutstop', onLayoutStop);
+    // schedule the run to allow react to paint the loading state
+    const t = window.setTimeout(() => layoutInstance.run(), 10);
+
+    // cleanup for this layout run
+    return () => {
+      layoutInstance.stop();
+      layoutInstance.removeListener('layoutstop', onLayoutStop);
+      clearTimeout(t);
+    };
   }, [model, results, colorMode, edgeMode, layout, modelDerivedData]);
 
   if (!model) {
@@ -305,6 +329,14 @@ export const NetworkGraph: React.FC<NetworkGraphProps> = ({ model, results }) =>
                   </div>
               )}
             </div>
+            {loading && (
+              <div className="absolute inset-0 flex items-center justify-center bg-white/60 dark:bg-slate-900/60 rounded-lg z-20">
+                <div className="flex flex-col items-center gap-2">
+                  <LoadingSpinner className="w-12 h-12" />
+                  <div className="text-xs text-slate-700 dark:text-slate-200">Laying out network...</div>
+                </div>
+              </div>
+            )}
              <div className="absolute bottom-2 left-2 flex flex-col items-start gap-2">
                 {colorMode === 'moleculeType' && modelDerivedData && (
                     <div className="bg-white/80 dark:bg-slate-800/80 p-2 rounded-md shadow-lg">

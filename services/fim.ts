@@ -213,10 +213,13 @@ export async function computeFIM(
 
   const startTotal = performance.now();
 
-  // Cache model in worker
-  const t0 = performance.now();
-  const modelId = await bnglService.prepareModel(model, { signal });
-  const t1 = performance.now();
+  // Ensure we always release any cached model created for this computation
+  let modelId: number | undefined;
+  try {
+    // Cache model in worker
+    const t0 = performance.now();
+    modelId = await bnglService.prepareModel(model, { signal });
+    const t1 = performance.now();
 
   // baseline simulation (no overrides)
   const baseline = await bnglService.simulateCached(modelId, undefined, simulationOptions, { signal });
@@ -772,9 +775,9 @@ export async function computeFIM(
   corrPairs.sort((a, b) => Math.abs(b.corr) - Math.abs(a.corr));
   const topCorrelatedPairs = corrPairs.slice(0, Math.min(20, corrPairs.length));
 
-  const tEndTotal = performance.now();
+    const tEndTotal = performance.now();
 
-  return {
+    return {
     eigenvalues: sortedVals,
     eigenvectors: sortedVecs,
     paramNames: parameterNames.slice(),
@@ -801,9 +804,19 @@ export async function computeFIM(
       simCount: totalRuns,
       totalMs: tEndTotal - startTotal,
       perSimMs: totalSimMs / Math.max(1, totalRuns),
-      modelId, // expose the worker-cached model id so callers can release when desired
+        // modelId removed: worker-cached model is released in finally; do not expose
     },
   } as FIMResult;
+  } finally {
+    if (typeof modelId === 'number') {
+      try {
+        // Best-effort release of the cached model in the worker to avoid leaks.
+        await bnglService.releaseModel(modelId);
+      } catch (err) {
+        console.warn('Failed to release FIM cached model:', err);
+      }
+    }
+  }
 }
 
 export function exportFIM(result: FIMResult) {

@@ -40,25 +40,44 @@ const extractErrorMessage = (payload: SerializedWorkerError | unknown): string =
 };
 
 const toError = (type: 'parse' | 'simulate', payload: SerializedWorkerError | unknown): Error => {
+  const message = extractErrorMessage(payload) || `${type} failed`;
   if (payload && typeof payload === 'object') {
-    const name = (payload as { name?: unknown }).name;
-    const message = extractErrorMessage(payload) || `${type} failed`;
+    const p = payload as Record<string, unknown>;
+    const name = typeof p.name === 'string' ? p.name : undefined;
+    const stack = typeof p.stack === 'string' ? p.stack : undefined;
+    const filename = typeof p.filename === 'string' ? p.filename : undefined;
+    const lineno = typeof p.lineno === 'number' ? p.lineno : undefined;
+    const colno = typeof p.colno === 'number' ? p.colno : undefined;
+
     if (name === 'AbortError') {
       return new DOMException(message || 'Operation cancelled', 'AbortError');
     }
+
     if (name === 'TimeoutError') {
-      const error = new Error(message);
-      error.name = 'TimeoutError';
-      return error;
+      const err = new Error(message);
+      err.name = 'TimeoutError';
+      if (stack) (err as any).stack = stack;
+      // attach the serialized payload for debugging
+      try {
+        (err as any).cause = payload;
+      } catch (e) {
+        // ignore property assignment errors
+      }
+      return err;
     }
+
+    const err = new Error(message + (filename ? ` (${filename}:${lineno ?? '?'}:${colno ?? '?'})` : ''));
+    if (name) err.name = String(name);
+    if (stack) (err as any).stack = stack;
+    try {
+      (err as any).cause = payload;
+    } catch (e) {
+      // ignore
+    }
+    return err;
   }
 
-  const detail = extractErrorMessage(payload) || `${type} failed`;
-  const error = new Error(detail);
-  if (payload && typeof payload === 'object') {
-    Object.assign(error, { cause: payload });
-  }
-  return error;
+  return new Error(message);
 };
 
 class BnglService {
@@ -67,6 +86,8 @@ class BnglService {
   private promises = new Map<number, PendingRequest>();
   private terminated = false;
   private lastCachedModelId?: number;
+  private progressListeners = new Set<(payload: any) => void>();
+  private warningListeners = new Set<(payload: any) => void>();
 
   constructor() {
     // Vite needs the URL construction inline so it treats this import as a worker entry.
@@ -74,6 +95,30 @@ class BnglService {
 
     this.worker.addEventListener('message', (event: MessageEvent<WorkerResponse>) => {
       const { id, type, payload } = event.data ?? {};
+
+  // Handle progress/warning notifications separately and do not resolve/reject any pending promise
+  const respType = type as unknown as string;
+  if (respType === 'progress') {
+        for (const cb of this.progressListeners) {
+          try {
+            cb(payload);
+          } catch (e) {
+            console.warn('[BnglService] progress listener error', e);
+          }
+        }
+        return;
+      }
+
+  if (respType === 'warning') {
+        for (const cb of this.warningListeners) {
+          try {
+            cb(payload);
+          } catch (e) {
+            console.warn('[BnglService] warning listener error', e);
+          }
+        }
+        return;
+      }
 
       if (id === -1 && type === 'worker_internal_error') {
         const detail = extractErrorMessage(payload);
@@ -322,6 +367,22 @@ class BnglService {
    */
   public releaseModel(modelId: number, requestOptions?: RequestOptions): Promise<{ modelId: number } | void> {
     return this.postMessage<{ modelId: number }>('release_model', { modelId }, { ...requestOptions, description: 'Release cached model' });
+  }
+
+  /**
+   * Register a progress listener for long-running worker tasks. Returns an unsubscribe function.
+   */
+  public onProgress(cb: (payload: any) => void): () => void {
+    this.progressListeners.add(cb);
+    return () => this.progressListeners.delete(cb);
+  }
+
+  /**
+   * Register a warning listener for worker warnings. Returns an unsubscribe function.
+   */
+  public onWarning(cb: (payload: any) => void): () => void {
+    this.warningListeners.add(cb);
+    return () => this.warningListeners.delete(cb);
   }
 }
 

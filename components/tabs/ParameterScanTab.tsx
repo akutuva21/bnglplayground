@@ -124,7 +124,9 @@ export const ParameterScanTab: React.FC<ParameterScanTabProps> = ({ model }) => 
   const [isRunning, setIsRunning] = useState(false);
   const [progress, setProgress] = useState({ current: 0, total: 0 });
   const [error, setError] = useState<string | null>(null);
-  const [scanAbortController, setScanAbortController] = useState<AbortController | null>(null);
+  // Use refs for lifecycle-bound cancellers and mounts to avoid setState-after-unmount races
+  const scanAbortControllerRef = useRef<AbortController | null>(null);
+  const isMountedRef = useRef(true);
   const cachedModelIdRef = useRef<number | null>(null);
   
 
@@ -200,12 +202,11 @@ export const ParameterScanTab: React.FC<ParameterScanTabProps> = ({ model }) => 
   }, [scanType]);
 
   const cancelActiveScan = useCallback((reason?: string) => {
-    setScanAbortController((controller) => {
-      if (controller) {
-        controller.abort(reason ?? 'Parameter scan cancelled.');
-      }
-      return null;
-    });
+    const controller = scanAbortControllerRef.current;
+    if (controller) {
+      controller.abort(reason ?? 'Parameter scan cancelled.');
+      scanAbortControllerRef.current = null;
+    }
   }, []);
 
   
@@ -365,12 +366,15 @@ export const ParameterScanTab: React.FC<ParameterScanTabProps> = ({ model }) => 
     } as const;
 
     const controller = new AbortController();
-    setScanAbortController(controller);
+    scanAbortControllerRef.current = controller;
+
+    // Ensure modelId is visible in finally for best-effort release
+    let modelId: number | null = null;
 
     try {
-        // Cache the base model in the worker to avoid serializing the full model for every run.
-    const modelId = await bnglService.prepareModel(model, { signal: controller.signal });
-    cachedModelIdRef.current = modelId;
+      // Cache the base model in the worker to avoid serializing the full model for every run.
+      modelId = await bnglService.prepareModel(model, { signal: controller.signal });
+      cachedModelIdRef.current = modelId;
 
         if (scanType === '1d') {
           const result: OneDResult = { parameterName: parameter1, values: [] };
@@ -390,9 +394,9 @@ export const ParameterScanTab: React.FC<ParameterScanTabProps> = ({ model }) => 
             }, {});
             result.values.push({ parameterValue: value, observables });
             completed += 1;
-            setProgress({ current: completed, total: totalRuns });
+            if (isMountedRef.current) setProgress({ current: completed, total: totalRuns });
           }
-          setOneDResult(result);
+          if (isMountedRef.current) setOneDResult(result);
         } else {
           const grid: Record<string, number[][]> = {};
           observableNames.forEach((name) => {
@@ -413,10 +417,10 @@ export const ParameterScanTab: React.FC<ParameterScanTabProps> = ({ model }) => 
                 grid[name][yi][xi] = Number.isFinite(numeric) ? numeric : 0;
               });
               completed += 1;
-              setProgress({ current: completed, total: totalRuns });
+              if (isMountedRef.current) setProgress({ current: completed, total: totalRuns });
             }
           }
-          setTwoDResult({
+          if (isMountedRef.current) setTwoDResult({
             parameterNames: [parameter1, parameter2],
             xValues: range1,
             yValues: range2,
@@ -426,26 +430,49 @@ export const ParameterScanTab: React.FC<ParameterScanTabProps> = ({ model }) => 
     } catch (scanError) {
       if (scanError instanceof DOMException && scanError.name === 'AbortError') {
         const cancelledByUser = scanError.message?.includes('cancelled by user');
-        setError(cancelledByUser ? 'Parameter scan was cancelled.' : null);
+        if (isMountedRef.current) setError(cancelledByUser ? 'Parameter scan was cancelled.' : null);
       } else {
         const message = scanError instanceof Error ? scanError.message : String(scanError);
-        setError(`Parameter scan failed: ${message}`);
-        setOneDResult(null);
-        setTwoDResult(null);
+        if (isMountedRef.current) setError(`Parameter scan failed: ${message}`);
+        if (isMountedRef.current) setOneDResult(null);
+        if (isMountedRef.current) setTwoDResult(null);
       }
     } finally {
-      setIsRunning(false);
+      if (isMountedRef.current) setIsRunning(false);
       const wasAborted = controller.signal.aborted;
-      setScanAbortController((current) => (current === controller ? null : current));
+      if (scanAbortControllerRef.current === controller) scanAbortControllerRef.current = null;
+
+      // Best-effort release of the prepared model to avoid leaking cached worker state.
+      if (typeof modelId === 'number') {
+        bnglService.releaseModel(modelId).catch((err) => {
+          // eslint-disable-next-line no-console
+          console.warn('Failed to release cached model after parameter scan', modelId, err);
+        });
+        if (cachedModelIdRef.current === modelId) cachedModelIdRef.current = null;
+      }
+
       if (!wasAborted) {
-        setProgress((current) => ({ ...current, current: current.total }));
+        if (isMountedRef.current) setProgress((current) => ({ ...current, current: current.total }));
       }
     }
   };
 
   // Release any cached model when this component unmounts or when the model changes.
   useEffect(() => {
+    isMountedRef.current = true;
     return () => {
+      isMountedRef.current = false;
+      // Abort any running scan promptly
+      const controller = scanAbortControllerRef.current;
+      if (controller) {
+        try {
+          controller.abort('Component unmounted: aborting parameter scan.');
+        } catch (e) {
+          // ignore
+        }
+        scanAbortControllerRef.current = null;
+      }
+
       const id = cachedModelIdRef.current;
       if (typeof id === 'number') {
         bnglService.releaseModel(id).catch((err) => {

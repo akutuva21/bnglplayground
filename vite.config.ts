@@ -18,6 +18,23 @@ export default defineConfig(() => {
           '@': path.resolve(__dirname, '.'),
         }
       },
+      build: {
+        rollupOptions: {
+          output: {
+            manualChunks(id: string) {
+              if (!id) return undefined;
+              if (id.includes('node_modules')) {
+                if (id.includes('recharts')) return 'vendor_recharts';
+                if (id.includes('cytoscape')) return 'vendor_cytoscape';
+                if (id.includes('ml-matrix')) return 'vendor_ml_matrix';
+                if (id.includes('monaco-editor') || id.includes('monaco')) return 'vendor_monaco';
+                return 'vendor_misc';
+              }
+              return undefined;
+            },
+          },
+        },
+      },
       test: {
         environment: 'node',
         include: ['tests/**/*.spec.ts', 'tests/**/*.test.ts']

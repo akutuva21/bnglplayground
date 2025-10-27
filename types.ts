@@ -22,6 +22,7 @@ export interface BNGLSpecies {
 }
 
 export interface BNGLObservable {
+  type: 'molecules' | 'species';
   name: string;
   pattern: string;
 }
@@ -48,6 +49,14 @@ export interface BNGLModel {
   observables: BNGLObservable[];
   reactions: BNGLReaction[];
   reactionRules: ReactionRule[];
+  // Options provided to generate_network() in the BNGL script.
+  // These should be parsed from the BNGL file and respected during network generation.
+  networkOptions?: {
+    maxAgg?: number;
+    maxIter?: number;
+    maxStoich?: Record<string, number>;
+    overwrite?: boolean;
+  };
 }
 
 export interface SimulationResults {

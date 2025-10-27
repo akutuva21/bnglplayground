@@ -1,108 +1,96 @@
 import React, { useRef, useEffect } from 'react';
-import { useTheme } from '../hooks/useTheme';
+
+interface MonacoEditorProps {
+  value: string;
+  onChange: (value: string) => void;
+  language?: string;
+  theme?: 'light' | 'dark';
+}
 
 declare const window: any;
 
-// Use a module-level singleton promise to ensure the Monaco loader script is fetched and executed only once.
 let monacoLoadPromise: Promise<any> | null = null;
 
 function loadMonaco() {
   if (monacoLoadPromise) {
     return monacoLoadPromise;
   }
-
+  
   monacoLoadPromise = new Promise((resolve, reject) => {
-    // If Monaco is already available, resolve immediately.
     if (window.monaco) {
       resolve(window.monaco);
       return;
     }
-
+    
     const script = document.createElement('script');
     script.src = 'https://cdn.jsdelivr.net/npm/monaco-editor@0.45.0/min/vs/loader.js';
     script.async = true;
-
     script.onload = () => {
-      window.require.config({
-        paths: { 'vs': 'https://cdn.jsdelivr.net/npm/monaco-editor@0.45.0/min/vs' }
+      window.require.config({ paths: { vs: 'https://cdn.jsdelivr.net/npm/monaco-editor@0.45.0/min/vs' } });
+      window.require(['vs/editor/editor.main'], () => {
+        resolve(window.monaco);
       });
-      window.require(['vs/editor/editor.main'],
-        (monaco: any) => {
-          resolve(monaco);
-        },
-        (error: any) => {
-          reject(error);
-        }
-      );
     };
-
-    script.onerror = (error) => {
-      reject(error);
-    };
-
-    document.body.appendChild(script);
+    script.onerror = reject;
+    document.head.appendChild(script);
   });
-
+  
   return monacoLoadPromise;
 }
 
-
-interface MonacoEditorProps {
-  value: string;
-  language: string;
-  onChange: (value: string | undefined) => void;
-}
-
-const MonacoEditor: React.FC<MonacoEditorProps> = ({ value, language, onChange }) => {
+export const MonacoEditor: React.FC<MonacoEditorProps> = ({ 
+  value, 
+  onChange, 
+  language = 'bngl', 
+  theme = 'light' 
+}) => {
   const editorRef = useRef<HTMLDivElement>(null);
-  const editorInstanceRef = useRef<any>(null);
   const monacoRef = useRef<any>(null);
-  const [theme] = useTheme();
-
+  const editorInstanceRef = useRef<any>(null);
   const onChangeRef = useRef(onChange);
+
   useEffect(() => {
     onChangeRef.current = onChange;
   }, [onChange]);
-  
+
+  // Effect 1: Create/dispose editor when language or theme changes
   useEffect(() => {
     let isCancelled = false;
     let editor: any = null;
 
     loadMonaco().then(monaco => {
       if (isCancelled || !editorRef.current) return;
-
       monacoRef.current = monaco;
 
-      // Register the custom BNGL language if it hasn't been already.
+      // Register BNGL language once
       if (!monaco.languages.getLanguages().some(({ id }: {id: string}) => id === 'bngl')) {
         monaco.languages.register({ id: 'bngl' });
-
         monaco.languages.setMonarchTokensProvider('bngl', {
-            keywords: [
-                'begin', 'end', 'model', 'parameters', 'molecule', 'types', 'seed',
-                'species', 'observables', 'functions', 'reaction', 'rules', 'actions',
-                'generate_network', 'simulate', 'method', 't_end', 'n_steps', 'ode', 'ssa',
-                'overwrite'
+          keywords: [
+            'begin', 'end', 'model', 'parameters', 'molecule', 'types', 'seed',
+            'species', 'observables', 'functions', 'reaction', 'rules', 'actions',
+            'generate_network', 'simulate', 'method', 't_end', 'n_steps', 'ode', 'ssa',
+            'overwrite'
+          ],
+          tokenizer: {
+            root: [
+              [/#.*$/, 'comment'],
+              [/[a-zA-Z_]\w*/, {
+                cases: {
+                  '@keywords': 'keyword',
+                  '@default': 'identifier'
+                }
+              }],
+              [/([a-zA-Z_]\w*)\s*\(/, 'type.identifier'],
+              [/\d+(\.\d+)?(e[+-]?\d+)?/, 'number'],
+              [/->|<->/, 'operator'],
+              [/[()\[\]{},.!~+@]/, 'delimiter'],
             ],
-            tokenizer: {
-                root: [
-                    [/#.*$/, 'comment'],
-                    [/[a-zA-Z_]\w*/, {
-                        cases: {
-                            '@keywords': 'keyword',
-                            '@default': 'identifier'
-                        }
-                    }],
-                    [/(\w+)\s*\(/, 'type.identifier'],
-                    [/\d+(\.\d+)?(e[+-]?\d+)?/, 'number'],
-                    [/->|<->/, 'operator'],
-                    [/[()\[\]{},.!~+@]/, 'delimiter'],
-                ],
-            },
+          },
         });
       }
 
-      // Create the editor instance
+      // Create editor
       editor = monaco.editor.create(editorRef.current, {
         value,
         language,
@@ -110,49 +98,45 @@ const MonacoEditor: React.FC<MonacoEditorProps> = ({ value, language, onChange }
         automaticLayout: true,
         minimap: { enabled: false },
         wordWrap: 'on',
+        fontSize: 13,
+        lineNumbers: 'on',
+        scrollBeyondLastLine: false,
       });
       
       editorInstanceRef.current = editor;
 
-      // Attach the change listener
       editor.onDidChangeModelContent(() => {
         onChangeRef.current(editor.getValue());
       });
-
     }).catch(error => {
-        if (!isCancelled) {
-            console.error("Failed to initialize Monaco Editor:", error);
-        }
+      if (!isCancelled) {
+        console.error("Failed to initialize Monaco Editor:", error);
+      }
     });
 
     return () => {
       isCancelled = true;
       if (editor) {
-        editor.dispose();
+        try {
+          editor.dispose();
+        } catch (e) {
+          console.warn('Error disposing Monaco editor:', e);
+        }
       }
       editorInstanceRef.current = null;
     };
-  }, []); // Empty dependency array ensures this effect runs only once.
+  }, [language, theme, value]);  // ← CRITICAL: Must include 'value'
 
-  // Effect to update the editor's value when the `value` prop changes from outside
+  // Effect 2: Sync external value changes
   useEffect(() => {
     const editor = editorInstanceRef.current;
     if (editor && editor.getValue() !== value) {
-        const model = editor.getModel();
-        if (model) {
-            model.setValue(value);
-        } else {
-            editor.setValue(value);
-        }
+      const model = editor.getModel();
+      if (model) {
+        model.setValue(value);
+      }
     }
   }, [value]);
-
-  // Effect to update the theme
-  useEffect(() => {
-    if (monacoRef.current && editorInstanceRef.current) {
-      monacoRef.current.editor.setTheme(theme === 'dark' ? 'vs-dark' : 'vs');
-    }
-  }, [theme]);
 
   return <div ref={editorRef} className="w-full h-full border border-stone-300 dark:border-slate-700 rounded-md" />;
 };

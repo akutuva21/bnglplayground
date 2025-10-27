@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceArea } from 'recharts';
 import { BNGLModel, SimulationResults } from '../types';
 import { CHART_COLORS } from '../constants';
@@ -40,6 +40,12 @@ const CustomLegend = (props: any) => {
 export const ResultsChart: React.FC<ResultsChartProps> = ({ results, model, visibleSpecies, onVisibleSpeciesChange }) => {
   const [zoomHistory, setZoomHistory] = useState<ZoomDomain[]>([]);
   const [selection, setSelection] = useState<ZoomDomain | null>(null);
+
+  // Reset zoom state when the results object changes to avoid carrying zoom across runs
+  useEffect(() => {
+    setZoomHistory([]);
+    setSelection(null);
+  }, [results]);
 
   if (!results || results.data.length === 0) {
     return (
