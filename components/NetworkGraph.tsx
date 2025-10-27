@@ -243,7 +243,7 @@ export const NetworkGraph: React.FC<NetworkGraphProps> = ({ model, results }) =>
     
     // Run layout asynchronously so the spinner can render and the UI stays responsive
     if (isMountedRef.current) setLoading(true);
-    const layoutOptions = { name: layout === 'cose' ? 'cose-bilkent' : layout, animate: true, animationDuration: 500, padding: 30, nodeRepulsion: 4500, idealEdgeLength: 100, edgeLength: 120 } as any;
+    const layoutOptions = { name: layout === 'cose' || layout === 'cola' ? 'cose-bilkent' : layout, animate: true, animationDuration: 500, padding: 30, nodeRepulsion: 4500, idealEdgeLength: 100, edgeLength: 120 } as any;
     const layoutInstance = cy.layout(layoutOptions);
     const onLayoutStop = () => {
       if (!isMountedRef.current) return;
