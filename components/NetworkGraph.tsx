@@ -1,7 +1,6 @@
 
 import React, { useEffect, useRef, useState, useMemo } from 'react';
 import cytoscape from 'cytoscape';
-import cola from 'cytoscape-cola';
 import coseBilkent from 'cytoscape-cose-bilkent';
 import type { BNGLModel, SimulationResults } from '../types';
 import { CHART_COLORS } from '../constants';
@@ -11,7 +10,6 @@ import { Input } from './ui/Input';
 import { SearchIcon } from './icons/SearchIcon';
 import { LoadingSpinner } from './ui/LoadingSpinner';
 
-cytoscape.use(cola);
 cytoscape.use(coseBilkent);
 
 type LayoutName = 'cose' | 'cola' | 'circle' | 'grid';
