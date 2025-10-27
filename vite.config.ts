@@ -37,6 +37,7 @@ export default defineConfig(() => {
                 // Ensure cytoscape and its extensions (cose-bilkent, cola, etc.) are grouped together
                 if (id.includes('cytoscape-cose-bilkent') || id.includes('cytoscape')) return 'vendor_cytoscape';
                 if (id.includes('ml-matrix')) return 'vendor_ml_matrix';
+                if (id.includes('d3')) return 'vendor_d3';
                 if (id.includes('monaco-editor') || id.includes('monaco')) return 'vendor_monaco';
                 return 'vendor_misc';
               }
