@@ -1,0 +1,47 @@
+begin model
+begin parameters
+    k_ros 0.05
+    k_keap1 0.3
+    k_release 0.25
+    k_transcription 0.4
+    k_clear 0.1
+    k_reset 0.07
+end parameters
+
+begin molecule types
+    ROS(level~basal~elevated)
+    KEAP1(state~bound~released)
+    NRF2(loc~cyto~nuc)
+    Antioxidant(level~low~high)
+end molecule types
+
+begin seed species
+    ROS(level~basal) 60
+    KEAP1(state~bound) 50
+    NRF2(loc~cyto) 40
+    Antioxidant(level~low) 30
+end seed species
+
+begin reaction rules
+    ROS(level~basal) -> ROS(level~elevated) k_ros
+    ROS(level~elevated) + KEAP1(state~bound) -> ROS(level~elevated) + KEAP1(state~released) k_release
+    KEAP1(state~released) + NRF2(loc~cyto) -> KEAP1(state~released) + NRF2(loc~nuc) k_release
+    NRF2(loc~nuc) + Antioxidant(level~low) -> NRF2(loc~nuc) + Antioxidant(level~high) k_transcription
+    Antioxidant(level~high) + ROS(level~elevated) -> Antioxidant(level~high) + ROS(level~basal) k_clear
+    KEAP1(state~released) -> KEAP1(state~bound) k_reset
+    NRF2(loc~nuc) -> NRF2(loc~cyto) k_reset
+    Antioxidant(level~high) -> Antioxidant(level~low) k_reset
+end reaction rules
+
+begin observables
+    Molecules Elevated_ROS ROS(level~elevated)
+    Molecules Released_KEAP1 KEAP1(state~released)
+    Molecules Nuclear_NRF2 NRF2(loc~nuc)
+    Molecules High_Antioxidant Antioxidant(level~high)
+end observables
+
+begin actions
+    generate_network({overwrite=>1})
+    simulate({method=>"ode",t_start=>0,t_end=>100,n_steps=>200})
+end actions
+end model

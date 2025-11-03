@@ -161,42 +161,47 @@ function App() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-slate-100 font-sans">
+    <div className="flex min-h-screen flex-col bg-slate-50 font-sans text-slate-900 dark:bg-slate-900 dark:text-slate-100">
       <Header onAboutClick={() => setIsAboutModalOpen(true)} />
-      
-      <main className="container mx-auto p-4 sm:p-6 lg:p-8">
-        <div className="fixed top-20 right-8 z-50 w-full max-w-sm">
+
+      <main className="flex-1 overflow-hidden">
+        <div className="container mx-auto flex h-full flex-col gap-6 p-4 sm:p-6 lg:p-8">
+          <div className="fixed top-20 right-8 z-50 w-full max-w-sm">
             {status && <StatusMessage status={status} onClose={handleStatusClose} />}
-        </div>
-        
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 h-full">
-            <div className="lg:h-[calc(100vh-120px)]">
-            <EditorPanel
-                    code={code}
-                    onCodeChange={handleCodeChange}
-                    onParse={handleParse}
-                    onSimulate={handleSimulate}
-              onCancelSimulation={handleCancelSimulation}
-                    isSimulating={isSimulating}
-                    modelExists={!!model}
+          </div>
+
+          <div className="grid flex-1 grid-cols-1 gap-6 lg:grid-cols-2">
+            <div className="flex min-h-0 min-w-0 flex-col overflow-hidden">
+              <EditorPanel
+                code={code}
+                onCodeChange={handleCodeChange}
+                onParse={handleParse}
+                onSimulate={handleSimulate}
+                onCancelSimulation={handleCancelSimulation}
+                isSimulating={isSimulating}
+                modelExists={!!model}
+              />
+            </div>
+            <div className="flex min-h-0 min-w-0 flex-col overflow-hidden">
+              <div className="flex-1 overflow-y-auto overflow-x-hidden">
+                <VisualizationPanel
+                  model={model}
+                  results={results}
+                  onSimulate={handleSimulate}
+                  isSimulating={isSimulating}
+                  onCancelSimulation={handleCancelSimulation}
                 />
+              </div>
             </div>
-            <div className="lg:h-[calc(100vh-120px)] overflow-y-auto">
-            <VisualizationPanel 
-                    model={model} 
-                    results={results}
-                    onSimulate={handleSimulate}
-                    isSimulating={isSimulating}
-              onCancelSimulation={handleCancelSimulation}
-                 />
-            </div>
+          </div>
+          <SimulationModal
+            isGenerating={isSimulating}
+            progressMessage={generationProgress}
+            onCancel={handleCancelSimulation}
+          />
         </div>
-        <SimulationModal isGenerating={isSimulating} progressMessage={generationProgress} onCancel={handleCancelSimulation} />
       </main>
-       <AboutModal 
-        isOpen={isAboutModalOpen}
-        onClose={() => setIsAboutModalOpen(false)}
-      />
+      <AboutModal isOpen={isAboutModalOpen} onClose={() => setIsAboutModalOpen(false)} />
     </div>
   );
 }

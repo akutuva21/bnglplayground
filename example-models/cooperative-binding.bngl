@@ -1,0 +1,37 @@
+begin model
+begin parameters
+    k_on1 0.01
+    k_off1 0.005
+    k_on2 0.02
+    k_off2 0.003
+end parameters
+
+begin molecule types
+    Ligand()
+    Receptor(site1~U~B,site2~U~B)
+end molecule types
+
+begin seed species
+    Ligand() 200
+    Receptor(site1~U,site2~U) 50
+end seed species
+
+begin observables
+    Molecules Unbound Receptor(site1~U,site2~U)
+    Molecules Single_bound_site1 Receptor(site1~B,site2~U)
+    Molecules Single_bound_site2 Receptor(site1~U,site2~B)
+    Molecules Double_bound Receptor(site1~B,site2~B)
+end observables
+
+begin reaction rules
+    Ligand() + Receptor(site1~U) -> Ligand() + Receptor(site1~B) k_on1
+    Receptor(site1~B) -> Receptor(site1~U) k_off1
+    Ligand() + Receptor(site2~U) -> Ligand() + Receptor(site2~B) k_on2
+    Receptor(site2~B) -> Receptor(site2~U) k_off2
+end reaction rules
+
+begin actions
+    generate_network({overwrite=>1})
+    simulate({method=>"ode",t_end=>100,n_steps=>200})
+end actions
+end model

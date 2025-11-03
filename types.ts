@@ -86,6 +86,7 @@ export type WorkerRequest =
   | { id: number; type: 'cache_model'; payload: { model: BNGLModel } }
   | { id: number; type: 'release_model'; payload: { modelId: number } }
   | { id: number; type: 'simulate'; payload: { modelId: number; parameterOverrides?: Record<string, number>; options: SimulationOptions } }
+  | { id: number; type: 'generate_network'; payload: { model: BNGLModel; options?: NetworkGeneratorOptions } }
   | { id: number; type: 'cancel'; payload: { targetId: number } };
 
 export type WorkerResponse =
@@ -97,4 +98,27 @@ export type WorkerResponse =
   | { id: number; type: 'release_model_success'; payload: { modelId: number } }
   | { id: number; type: 'release_model_error'; payload: SerializedWorkerError }
   | { id: number; type: 'simulate_error'; payload: SerializedWorkerError }
+  | { id: number; type: 'generate_network_success'; payload: BNGLModel }
+  | { id: number; type: 'generate_network_error'; payload: SerializedWorkerError }
+  | { id: number; type: 'generate_network_progress'; payload: GeneratorProgress }
   | { id: -1; type: 'worker_internal_error'; payload: SerializedWorkerError };
+
+export interface NetworkGeneratorOptions {
+  maxSpecies?: number;
+  maxReactions?: number;
+  maxAgg?: number;
+  maxStoich?: number;
+  checkInterval?: number;
+  memoryLimit?: number;
+  timeLimit?: number;
+  maxIterations?: number;
+  progressCallback?: (progress: { currentSpecies: number; totalSpecies: number; iteration: number }) => void;
+}
+
+export interface GeneratorProgress {
+  species: number;
+  reactions: number;
+  iteration: number;
+  memoryUsed: number;
+  timeElapsed: number;
+}

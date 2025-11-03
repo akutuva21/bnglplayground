@@ -1,0 +1,36 @@
+begin model
+begin parameters
+    k_on 0.0005
+    k_off 0.0002
+    k_prod 1.2
+    k_deg 0.05
+end parameters
+
+begin molecule types
+    Gene(prom~off~on)
+    Protein()
+end molecule types
+
+begin seed species
+    Gene(prom~off) 1
+    Protein() 5
+end seed species
+
+begin observables
+    Molecules Promoter_on Gene(prom~on)
+    Molecules Promoter_off Gene(prom~off)
+    Molecules Effector Protein()
+end observables
+
+begin reaction rules
+    Gene(prom~off) + Protein() -> Gene(prom~on) + Protein() k_on
+    Gene(prom~on) -> Gene(prom~off) k_off
+    Gene(prom~on) -> Gene(prom~on) + Protein() k_prod
+    Protein() -> 0 k_deg
+end reaction rules
+
+begin actions
+    generate_network({overwrite=>1})
+    simulate({method=>"ode",t_end=>150,n_steps=>150})
+end actions
+end model

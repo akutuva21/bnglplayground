@@ -8,17 +8,67 @@ import type {
   WorkerRequest,
   WorkerResponse,
   SerializedWorkerError,
+  NetworkGeneratorOptions,
+  GeneratorProgress,
 } from '../types';
+import { NetworkGenerator } from '../src/services/graph/NetworkGenerator';
+import { BNGLParser } from '../src/services/graph/core/BNGLParser';
+import { Species } from '../src/services/graph/core/Species';
+import { Rxn } from '../src/services/graph/core/Rxn';
+import { parseBNGL as parseBNGLModel } from './parseBNGL';
 
 const ctx: DedicatedWorkerGlobalScope = self as unknown as DedicatedWorkerGlobalScope;
 
 type JobState = {
   cancelled: boolean;
+  controller?: AbortController;
 };
 
 const jobStates = new Map<number, JobState>();
 
-// Cached models stored by the worker to avoid re-sending large model objects repeatedly.
+// Ring buffer for logs to prevent memory blowup
+class LogRingBuffer {
+  private buffer: string[] = [];
+  private maxSize: number;
+  private writeIndex = 0;
+
+  constructor(maxSize: number = 1000) {
+    this.maxSize = maxSize;
+  }
+
+  add(message: string) {
+    this.buffer[this.writeIndex] = `[${new Date().toISOString()}] ${message}`;
+    this.writeIndex = (this.writeIndex + 1) % this.maxSize;
+  }
+
+  getAll(): string[] {
+    const result: string[] = [];
+    for (let i = 0; i < this.maxSize; i++) {
+      const index = (this.writeIndex - 1 - i + this.maxSize) % this.maxSize;
+      if (this.buffer[index]) {
+        result.push(this.buffer[index]);
+      } else {
+        break;
+      }
+    }
+    return result.reverse();
+  }
+
+  clear() {
+    this.buffer = [];
+    this.writeIndex = 0;
+  }
+}
+
+const logBuffer = new LogRingBuffer(1000);
+
+// Override console.log to use ring buffer
+const originalConsoleLog = console.log;
+console.log = (...args: any[]) => {
+  const message = args.map(arg => typeof arg === 'string' ? arg : JSON.stringify(arg)).join(' ');
+  logBuffer.add(message);
+  originalConsoleLog(...args); // Still log to actual console for debugging
+};
 const cachedModels = new Map<number, BNGLModel>();
 let nextModelId = 1;
 // LRU cache size limit for cached models inside the worker
@@ -34,7 +84,7 @@ const touchCachedModel = (modelId: number) => {
 
 const registerJob = (id: number) => {
   if (typeof id !== 'number' || Number.isNaN(id)) return;
-  jobStates.set(id, { cancelled: false });
+  jobStates.set(id, { cancelled: false, controller: new AbortController() });
 };
 
 const markJobComplete = (id: number) => {
@@ -45,6 +95,9 @@ const cancelJob = (id: number) => {
   const entry = jobStates.get(id);
   if (entry) {
     entry.cancelled = true;
+    if (entry.controller) {
+      entry.controller.abort();
+    }
   }
 };
 
@@ -64,8 +117,8 @@ const serializeError = (error: unknown): SerializedWorkerError => {
   }
   if (error && typeof error === 'object' && 'message' in error) {
     const message = typeof (error as { message?: unknown }).message === 'string' ? (error as { message: string }).message : 'Unknown error';
-    const name = typeof (error as { name?: unknown }).name === 'string' ? (error as { name: string }).name : undefined;
-    const stack = typeof (error as { stack?: unknown }).stack === 'string' ? (error as { stack: string }).stack : undefined;
+    const name = 'name' in error && typeof (error as { name?: unknown }).name === 'string' ? (error as { name: string }).name : undefined;
+    const stack = 'stack' in error && typeof (error as { stack?: unknown }).stack === 'string' ? (error as { stack: string }).stack : undefined;
     return { name, message, stack };
   }
   return { message: typeof error === 'string' ? error : 'Unknown error' };
@@ -93,297 +146,9 @@ ctx.addEventListener('unhandledrejection', (event) => {
 // --- Existing BNGL worker implementation (migrated from String.raw) ---
 
 function parseBNGL(jobId: number, bnglCode: string): BNGLModel {
-  const model: BNGLModel = {
-    parameters: {},
-    moleculeTypes: [],
-    species: [],
-    observables: [],
-    reactions: [],
-    reactionRules: [],
-  };
-
-  const getBlockContent = (jobId: number, blockName: string, code: string) => {
-    const escapeRegex = (value: string) => {
-      const ESCAPE_CODES: Record<number, true> = {
-        92: true,
-        94: true,
-        36: true,
-        42: true,
-        43: true,
-        63: true,
-        46: true,
-        40: true,
-        41: true,
-        124: true,
-        91: true,
-        93: true,
-        123: true,
-        125: true,
-      };
-
-      let result = '';
-      for (let i = 0; i < value.length; i++) {
-        const codePoint = value.charCodeAt(i);
-        if (ESCAPE_CODES[codePoint]) {
-          result += '\\';
-        }
-        result += value[i];
-      }
-      return result;
-    };
-
-    const escapedBlock = escapeRegex(blockName);
-    const beginPattern = new RegExp('^\\s*begin\\s+' + escapedBlock + '\\b', 'i');
-    const endPattern = new RegExp('^\\s*end\\s+' + escapedBlock + '\\b', 'i');
-
-    const lines = code.split(/\r?\n/);
-    const collected: string[] = [];
-    let inBlock = false;
-
-    for (const rawLine of lines) {
-      ensureNotCancelled(jobId);
-      const lineWithoutComments = rawLine.split('#')[0];
-      if (!inBlock) {
-        if (beginPattern.test(lineWithoutComments)) {
-          inBlock = true;
-        }
-        continue;
-      }
-
-      if (endPattern.test(lineWithoutComments)) {
-        break;
-      }
-
-      collected.push(rawLine);
-    }
-
-    return collected.join('\n').trim();
-  };
-
-  const cleanLine = (line: string) => line.trim().split('#')[0].trim();
-
-  const splitProductsAndRates = (segment: string, parameters: Record<string, number>) => {
-    const tokens = segment.trim().split(/\s+/);
-    if (tokens.length === 0) {
-      return { productChunk: '', rateChunk: '' };
-    }
-
-    const rateTokens: string[] = [];
-    while (tokens.length > 0) {
-      const token = tokens[tokens.length - 1];
-      const cleaned = token.replace(/,$/, '');
-      const isParam = Object.hasOwn(parameters, cleaned);
-      const numeric = cleaned !== '' && !Number.isNaN(parseFloat(cleaned));
-      const singleZeroProduct = tokens.length === 1 && cleaned === '0';
-      if ((!isParam && !numeric) || singleZeroProduct) break;
-
-      rateTokens.push(cleaned);
-      tokens.pop();
-    }
-
-    return {
-      productChunk: tokens.join(' ').trim(),
-      rateChunk: rateTokens.reverse().join(' ').trim(),
-    };
-  };
-
-  const parseEntityList = (segment: string) => {
-    const parts: string[] = [];
-    let current = '';
-    let depth = 0;
-    for (let i = 0; i < segment.length; i++) {
-      const ch = segment[i];
-      if (ch === '(') depth++;
-      else if (ch === ')') depth--;
-      else if (ch === '+' && depth === 0) {
-        if (current.trim()) parts.push(current.trim());
-        current = '';
-        continue;
-      }
-      current += ch;
-    }
-    if (current.trim()) parts.push(current.trim());
-    return parts;
-  };
-
-  const paramsContent = getBlockContent(jobId, 'parameters', bnglCode);
-  if (paramsContent) {
-    for (const line of paramsContent.split(/\r?\n/)) {
-      ensureNotCancelled(jobId);
-      const cleaned = cleanLine(line);
-      if (cleaned) {
-        const parts = cleaned.split(/\s+/);
-        if (parts.length >= 2) {
-          model.parameters[parts[0]] = parseFloat(parts[1]);
-        }
-      }
-    }
-  }
-
-  const molTypesContent = getBlockContent(jobId, 'molecule types', bnglCode);
-  if (molTypesContent) {
-    for (const line of molTypesContent.split(/\r?\n/)) {
-      ensureNotCancelled(jobId);
-      const cleaned = cleanLine(line);
-      if (cleaned) {
-        const match = cleaned.match(/(\w+)\((.*?)\)/);
-        if (match) {
-          const name = match[1];
-          const components = match[2].split(',').map((c) => c.trim()).filter(Boolean);
-          model.moleculeTypes.push({ name, components });
-        } else {
-          model.moleculeTypes.push({ name: cleaned, components: [] });
-        }
-      }
-    }
-  }
-
-  const speciesContent = getBlockContent(jobId, 'seed species', bnglCode);
-  if (speciesContent) {
-    for (const line of speciesContent.split(/\r?\n/)) {
-      ensureNotCancelled(jobId);
-      const cleaned = cleanLine(line);
-      if (cleaned) {
-        const parts = cleaned.split(/\s+/);
-        const concentrationStr = parts.pop() ?? '0';
-        const name = parts.join(' ');
-        let concentration: number;
-        if (concentrationStr in model.parameters) {
-          concentration = model.parameters[concentrationStr];
-        } else {
-          concentration = parseFloat(concentrationStr);
-        }
-
-        if (name && !Number.isNaN(concentration)) {
-          model.species.push({ name, initialConcentration: concentration });
-        }
-      }
-    }
-  }
-
-  const observablesContent = getBlockContent(jobId, 'observables', bnglCode);
-  if (observablesContent) {
-    for (const line of observablesContent.split(/\r?\n/)) {
-      ensureNotCancelled(jobId);
-      const cleaned = cleanLine(line);
-      if (cleaned) {
-        const parts = cleaned.split(/\s+/);
-        if (parts.length >= 3 && (parts[0].toLowerCase() === 'molecules' || parts[0].toLowerCase() === 'species')) {
-          model.observables.push({ name: parts[1], pattern: parts.slice(2).join(' ') });
-        }
-      }
-    }
-  }
-
-  const rulesContent = getBlockContent(jobId, 'reaction rules', bnglCode);
-  if (rulesContent) {
-    const statements: string[] = [];
-    let current = '';
-
-    for (const line of rulesContent.split(/\r?\n/)) {
-      ensureNotCancelled(jobId);
-      const cleaned = cleanLine(line);
-      if (!cleaned) continue;
-
-      if (cleaned.endsWith('\\')) {
-        current += cleaned.slice(0, -1).trim() + ' ';
-      } else {
-        current += cleaned;
-        statements.push(current.trim());
-        current = '';
-      }
-    }
-
-    if (current.trim()) {
-      statements.push(current.trim());
-    }
-
-    statements.forEach((statement) => {
-      ensureNotCancelled(jobId);
-      let ruleLine = statement;
-      const labelMatch = ruleLine.match(/^[^:]+:\s*(.*)$/);
-      if (labelMatch) {
-        ruleLine = labelMatch[1];
-      }
-
-      const isBidirectional = ruleLine.includes('<->');
-      const parts = ruleLine.split(isBidirectional ? '<->' : '->');
-      if (parts.length < 2) {
-        console.warn('[Worker] Rule parsing failed - not enough parts:', statement);
-        return;
-      }
-
-      const reactantsPart = parts[0].trim();
-      const productsAndRatesPart = parts[1].trim();
-
-      const reactants = parseEntityList(reactantsPart);
-      if (reactants.length === 0) {
-        return;
-      }
-
-      const { productChunk, rateChunk } = splitProductsAndRates(productsAndRatesPart, model.parameters);
-      if (!rateChunk) {
-        return;
-      }
-
-      const products = parseEntityList(productChunk);
-      if (products.length === 0) {
-        return;
-      }
-
-      const rateConstants = rateChunk
-        .split(',')
-        .reduce<string[]>((acc, part) => {
-          part
-            .trim()
-            .split(/\s+/)
-            .filter(Boolean)
-            .forEach((token) => acc.push(token));
-          return acc;
-        }, []);
-      if (rateConstants.length === 0) {
-        return;
-      }
-
-      const forwardRateLabel = rateConstants[0];
-      const reverseRateLabel = rateConstants[1];
-
-      const rule = {
-        reactants,
-        products,
-        rate: forwardRateLabel,
-        isBidirectional,
-        reverseRate: isBidirectional ? reverseRateLabel : undefined,
-      };
-      model.reactionRules.push(rule);
-    });
-  }
-
-  model.reactionRules.forEach((rule) => {
-    const forwardRate = model.parameters[rule.rate] ?? parseFloat(rule.rate);
-    if (!Number.isNaN(forwardRate)) {
-      model.reactions.push({
-        reactants: rule.reactants,
-        products: rule.products,
-        rate: rule.rate,
-        rateConstant: forwardRate,
-      });
-    }
-
-    if (rule.isBidirectional && rule.reverseRate) {
-      const reverseRate = model.parameters[rule.reverseRate] ?? parseFloat(rule.reverseRate);
-      if (!Number.isNaN(reverseRate)) {
-        model.reactions.push({
-          reactants: rule.products,
-          products: rule.reactants,
-          rate: rule.reverseRate,
-          rateConstant: reverseRate,
-        });
-      }
-    }
+  return parseBNGLModel(bnglCode, {
+    checkCancelled: () => ensureNotCancelled(jobId),
   });
-
-  return model;
 }
 
 function generateNetwork(jobId: number, inputModel: BNGLModel): BNGLModel {
@@ -742,9 +507,78 @@ function generateNetwork(jobId: number, inputModel: BNGLModel): BNGLModel {
   return model;
 }
 
-function simulate(jobId: number, inputModel: BNGLModel, options: SimulationOptions): SimulationResults {
+async function generateExpandedNetwork(jobId: number, inputModel: BNGLModel): Promise<BNGLModel> {
+  console.log('[Worker] Starting network generation for model with', inputModel.species.length, 'species and', inputModel.reactionRules.length, 'rules');
+
+  // Convert BNGLModel to graph structures
+  const seedSpecies = inputModel.species.map(s => {
+    console.log('[generateNetwork] parsing seed:', s.name);
+    const graph = BNGLParser.parseSpeciesGraph(s.name);
+    console.log('[generateNetwork] parsed graph =>', BNGLParser.speciesGraphToString(graph));
+    return graph;
+  });
+
+  const formatSpeciesList = (list: string[]) => (list.length > 0 ? list.join(' + ') : '0');
+
+  const rules = inputModel.reactionRules.flatMap(r => {
+    const rate = inputModel.parameters[r.rate] ?? parseFloat(r.rate);
+    const reverseRate = r.reverseRate ? (inputModel.parameters[r.reverseRate] ?? parseFloat(r.reverseRate)) : rate;
+    const ruleStr = `${formatSpeciesList(r.reactants)} -> ${formatSpeciesList(r.products)}`;
+    const forwardRule = BNGLParser.parseRxnRule(ruleStr, rate);
+    forwardRule.name = r.reactants.join('+') + '->' + r.products.join('+');
+
+    if (r.isBidirectional) {
+      const reverseRuleStr = `${formatSpeciesList(r.products)} -> ${formatSpeciesList(r.reactants)}`;
+      const reverseRule = BNGLParser.parseRxnRule(reverseRuleStr, reverseRate);
+      reverseRule.name = r.products.join('+') + '->' + r.reactants.join('+');
+      return [forwardRule, reverseRule];
+    } else {
+      return [forwardRule];
+    }
+  });
+
+  // Use the new NetworkGenerator
+  const generator = new NetworkGenerator({ maxSpecies: 10000, maxIterations: 100 });
+  const result = await generator.generate(seedSpecies, rules);
+
+  console.log('[Worker] Network generation complete. Generated', result.species.length, 'species and', result.reactions.length, 'reactions');
+
+  // Convert result back to BNGLModel
+  const generatedModel: BNGLModel = {
+    ...inputModel,
+    species: result.species.map((s: Species) => {
+      const name = BNGLParser.speciesGraphToString(s.graph);
+      // Find the original concentration if this species existed in the input
+      const originalSpecies = inputModel.species.find(orig => orig.name === name);
+      const concentration = originalSpecies ? originalSpecies.initialConcentration : (s.concentration || 0);
+      return { name, initialConcentration: concentration };
+    }),
+    reactions: result.reactions.map((r: Rxn) => {
+      const reaction = {
+        reactants: r.reactants.map((idx: number) => BNGLParser.speciesGraphToString(result.species[idx].graph)),
+        products: r.products.map((idx: number) => BNGLParser.speciesGraphToString(result.species[idx].graph)),
+        rate: r.rate.toString(),
+        rateConstant: r.rate
+      };
+      return reaction;
+    }),
+  };
+
+  return generatedModel;
+}
+
+async function simulate(jobId: number, inputModel: BNGLModel, options: SimulationOptions): Promise<SimulationResults> {
   ensureNotCancelled(jobId);
-  const expandedModel = generateNetwork(jobId, inputModel);
+  console.log('[Worker] Starting simulation with', inputModel.species.length, 'species and', inputModel.reactions.length, 'reactions');
+  console.log('[Worker] Initial species:', inputModel.species.map(s => `${s.name}: ${s.initialConcentration}`));
+  console.log('[Worker] Observables:', inputModel.observables.map(o => `${o.name}: ${o.pattern}`));
+
+  // Use the new graph-based network generator instead of the old one
+  const expandedModel = await generateExpandedNetwork(jobId, inputModel);
+  console.log('[Worker] After network expansion:', expandedModel.species.length, 'species and', expandedModel.reactions.length, 'reactions');
+  console.log('[Worker] Expanded species:', expandedModel.species.map(s => `${s.name}: ${s.initialConcentration}`));
+  console.log('[Worker] Expanded reactions:', expandedModel.reactions.map(r => `${r.reactants.join(' + ')} -> ${r.products.join(' + ')} (rate: ${r.rateConstant})`));
+
   const model: BNGLModel = JSON.parse(JSON.stringify(expandedModel));
 
   const { t_end, n_steps, method } = options;
@@ -755,6 +589,7 @@ function simulate(jobId: number, inputModel: BNGLModel, options: SimulationOptio
   const evaluateObservables = (concs: Record<string, number>) => {
     ensureNotCancelled(jobId);
     const obsValues: Record<string, number> = {};
+
     for (const obs of model.observables) {
       ensureNotCancelled(jobId);
       let total = 0;
@@ -799,52 +634,97 @@ function simulate(jobId: number, inputModel: BNGLModel, options: SimulationOptio
         }
 
         if (pattern.includes('(')) {
-          const molMatch = pattern.match(/^([A-Za-z0-9_]+)\(([^)]*)\)/);
-          if (molMatch) {
-            const molName = molMatch[1];
-            const componentSpec = molMatch[2].trim();
+          // Handle complex patterns (molecules connected with dots)
+          if (pattern.includes('.')) {
+            // Split complex pattern into individual molecules
+            const patternMolecules = pattern.split('.').map(s => s.trim());
+            const speciesMolecules = speciesStr.split('.').map(s => s.trim());
 
-            if (speciesStr.includes(`${molName}(`)) {
-              const molRegex = new RegExp(`${molName}\\(([^)]*)\\)`);
-              const molMatchResult = speciesStr.match(molRegex);
-              if (molMatchResult) {
-                const speciesComponents = molMatchResult[1]
-                  .split(',')
-                  .map((part) => part.trim())
-                  .filter(Boolean);
+            if (patternMolecules.length === speciesMolecules.length) {
+              const allMatch = patternMolecules.every((patMol, idx) => {
+                const specMol = speciesMolecules[idx];
+                const patMatch = patMol.match(/^([A-Za-z0-9_]+)\(([^)]*)\)/);
+                const specMatch = specMol.match(/^([A-Za-z0-9_]+)\(([^)]*)\)/);
 
-                const requiredComponents = componentSpec
-                  ? componentSpec.split(',').map((part) => part.trim()).filter(Boolean)
-                  : [];
+                if (!patMatch || !specMatch) {
+                  return patMol === specMol;
+                }
 
-                const satisfiesComponents = requiredComponents.every((reqComp) => {
-                  const compBase = reqComp.split('~')[0].split('!')[0];
-                  const stateRequired = reqComp.includes('~') ? reqComp.split('~')[1].split('!')[0] : null;
-                  const bondRequired = reqComp.includes('!') ? reqComp.split('!')[1] : null;
-                  const requiresUnbound = reqComp.length > 0 && !reqComp.includes('!') && !reqComp.includes('~');
+                if (patMatch[1] !== specMatch[1]) return false;
 
-                  return speciesComponents.some((specComp) => {
+                const patComps = patMatch[2].split(',').map(s => s.trim()).filter(Boolean);
+                const specComps = specMatch[2].split(',').map(s => s.trim()).filter(Boolean);
+
+                return patComps.every(patComp => {
+                  const patBase = patComp.split('~')[0].split('!')[0];
+                  const stateReq = patComp.includes('~') ? patComp.split('~')[1].split('!')[0] : null;
+                  const bondReq = patComp.includes('!') ? patComp.split('!')[1] : null;
+
+                  return specComps.some(specComp => {
                     const specBase = specComp.split('~')[0].split('!')[0];
-                    if (specBase !== compBase) return false;
+                    if (specBase !== patBase) return false;
 
-                    if (stateRequired && !specComp.includes(`~${stateRequired}`)) {
-                      return false;
-                    }
-
-                    if (requiresUnbound && specComp.includes('!')) {
-                      return false;
-                    }
-
-                    if (bondRequired && !specComp.includes(`!${bondRequired}`)) {
-                      return false;
-                    }
+                    if (stateReq && !specComp.includes(`~${stateReq}`)) return false;
+                    if (bondReq && !specComp.includes(`!${bondReq}`)) return false;
 
                     return true;
                   });
                 });
+              });
 
-                if (satisfiesComponents || requiredComponents.length === 0) {
-                  total += concentration;
+              if (allMatch) {
+                total += concentration;
+              }
+            }
+          } else {
+            // Single molecule pattern
+            const molMatch = pattern.match(/^([A-Za-z0-9_]+)\(([^)]*)\)/);
+            if (molMatch) {
+              const molName = molMatch[1];
+              const componentSpec = molMatch[2].trim();
+
+              if (speciesStr.includes(`${molName}(`)) {
+                const molRegex = new RegExp(`${molName}\\(([^)]*)\\)`);
+                const molMatchResult = speciesStr.match(molRegex);
+                if (molMatchResult) {
+                  const speciesComponents = molMatchResult[1]
+                    .split(',')
+                    .map((part) => part.trim())
+                    .filter(Boolean);
+
+                  const requiredComponents = componentSpec
+                    ? componentSpec.split(',').map((part) => part.trim()).filter(Boolean)
+                    : [];
+
+                  const satisfiesComponents = requiredComponents.every((reqComp) => {
+                    const compBase = reqComp.split('~')[0].split('!')[0];
+                    const stateRequired = reqComp.includes('~') ? reqComp.split('~')[1].split('!')[0] : null;
+                    const bondRequired = reqComp.includes('!') ? reqComp.split('!')[1] : null;
+                    const requiresUnbound = reqComp.length > 0 && !reqComp.includes('!') && !reqComp.includes('~');
+
+                    return speciesComponents.some((specComp) => {
+                      const specBase = specComp.split('~')[0].split('!')[0];
+                      if (specBase !== compBase) return false;
+
+                      if (stateRequired && !specComp.includes(`~${stateRequired}`)) {
+                        return false;
+                      }
+
+                      if (requiresUnbound && specComp.includes('!')) {
+                        return false;
+                      }
+
+                      if (bondRequired && !specComp.includes(`!${bondRequired}`)) {
+                        return false;
+                      }
+
+                      return true;
+                    });
+                  });
+
+                  if (satisfiesComponents || requiredComponents.length === 0) {
+                    total += concentration;
+                  }
                 }
               }
             }
@@ -1231,56 +1111,60 @@ ctx.addEventListener('message', (event: MessageEvent<WorkerRequest>) => {
 
   if (type === 'simulate') {
     registerJob(id);
-    try {
-      if (!payload || typeof payload !== 'object') {
-        throw new Error('Simulation payload missing');
-      }
-
-      // Backwards-compatible: payload can be { model, options } or { modelId, parameterOverrides?, options }
-      const p = payload as any;
-      let model: BNGLModel | undefined = undefined;
-      const options: SimulationOptions | undefined = p.options;
-
-      if (p.model) {
-        model = p.model as BNGLModel;
-      } else if (typeof p.modelId === 'number') {
-        const cached = cachedModels.get(p.modelId);
-        if (!cached) throw new Error('Cached model not found in worker');
-        // mark as recently used
-        touchCachedModel(p.modelId);
-        // If there are parameter overrides, create a shallow copy and update rate constants
-        if (!p.parameterOverrides || Object.keys(p.parameterOverrides).length === 0) {
-          model = cached;
-        } else {
-          const overrides: Record<string, number> = p.parameterOverrides;
-          const nextModel: BNGLModel = {
-            ...cached,
-            parameters: { ...(cached.parameters || {}), ...overrides },
-            reactions: [],
-          } as BNGLModel;
-
-          // Update reaction rate constants using new parameters
-          (cached.reactions || []).forEach((r) => {
-            const rateConst = nextModel.parameters[r.rate] ?? parseFloat(r.rate as unknown as string);
-            nextModel.reactions.push({ ...r, rateConstant: rateConst });
-          });
-          model = nextModel;
+    const jobEntry = jobStates.get(id);
+    if (!jobEntry) return; // Should not happen
+    (async () => {
+      try {
+        if (!payload || typeof payload !== 'object') {
+          throw new Error('Simulation payload missing');
         }
-      }
 
-      if (!model || !options) {
-        throw new Error('Simulation payload incomplete');
-      }
+        // Backwards-compatible: payload can be { model, options } or { modelId, parameterOverrides?, options }
+        const p = payload as any;
+        let model: BNGLModel | undefined = undefined;
+        const options: SimulationOptions | undefined = p.options;
 
-      const results = simulate(id, model, options);
-      const response: WorkerResponse = { id, type: 'simulate_success', payload: results };
-      ctx.postMessage(response);
-    } catch (error) {
-      const response: WorkerResponse = { id, type: 'simulate_error', payload: serializeError(error) };
-      ctx.postMessage(response);
-    } finally {
-      markJobComplete(id);
-    }
+        if (p.model) {
+          model = p.model as BNGLModel;
+        } else if (typeof p.modelId === 'number') {
+          const cached = cachedModels.get(p.modelId);
+          if (!cached) throw new Error('Cached model not found in worker');
+          // mark as recently used
+          touchCachedModel(p.modelId);
+          // If there are parameter overrides, create a shallow copy and update rate constants
+          if (!p.parameterOverrides || Object.keys(p.parameterOverrides).length === 0) {
+            model = cached;
+          } else {
+            const overrides: Record<string, number> = p.parameterOverrides;
+            const nextModel: BNGLModel = {
+              ...cached,
+              parameters: { ...(cached.parameters || {}), ...overrides },
+              reactions: [],
+            } as BNGLModel;
+
+            // Update reaction rate constants using new parameters
+            (cached.reactions || []).forEach((r) => {
+              const rateConst = nextModel.parameters[r.rate] ?? parseFloat(r.rate as unknown as string);
+              nextModel.reactions.push({ ...r, rateConstant: rateConst });
+            });
+            model = nextModel;
+          }
+        }
+
+        if (!model || !options) {
+          throw new Error('Simulation payload incomplete');
+        }
+
+        const results = await simulate(id, model, options);
+        const response: WorkerResponse = { id, type: 'simulate_success', payload: results };
+        ctx.postMessage(response);
+      } catch (error) {
+        const response: WorkerResponse = { id, type: 'simulate_error', payload: serializeError(error) };
+        ctx.postMessage(response);
+      } finally {
+        markJobComplete(id);
+      }
+    })();
     return;
   }
 
@@ -1343,6 +1227,97 @@ ctx.addEventListener('message', (event: MessageEvent<WorkerRequest>) => {
     } finally {
       markJobComplete(id);
     }
+    return;
+  }
+
+  if (type === 'generate_network') {
+    registerJob(id);
+    const jobEntry = jobStates.get(id);
+    if (!jobEntry) return; // Should not happen
+    (async () => {
+      try {
+        if (!payload || typeof payload !== 'object') {
+          throw new Error('Generate network payload missing');
+        }
+
+        const p = payload as { model: BNGLModel; options?: NetworkGeneratorOptions };
+        const { model, options } = p;
+
+        if (!model) {
+          throw new Error('Model missing in generate_network payload');
+        }
+
+        // Convert BNGLModel to graph structures (instrumented)
+        console.log('[generate_network handler] seed species raw:', model.species.map(s => s.name));
+        const seedSpecies = model.species.map(s => {
+          console.log('[generate_network handler] parsing seed:', s.name);
+          const graph = BNGLParser.parseSpeciesGraph(s.name);
+          console.log('[generate_network handler] parsed graph =>', BNGLParser.speciesGraphToString(graph));
+          return graph;
+        });
+        ensureNotCancelled(id);
+
+        const formatSpeciesList = (list: string[]) => (list.length > 0 ? list.join(' + ') : '0');
+
+        const rules = model.reactionRules.map(r => {
+          const rate = model.parameters[r.rate] ?? parseFloat(r.rate);
+          const ruleStr = `${formatSpeciesList(r.reactants)} ${r.isBidirectional ? '<->' : '->'} ${formatSpeciesList(r.products)}`;
+          return BNGLParser.parseRxnRule(ruleStr, rate);
+        });
+        ensureNotCancelled(id);
+
+        // Use the controller from jobStates
+        const controller = jobEntry.controller!;
+
+        // Set up progress callback to stream to main thread (throttled to 4Hz)
+        let lastProgressTime = 0;
+        const progressCallback = (progress: GeneratorProgress) => {
+          const now = Date.now();
+          if (now - lastProgressTime >= 250) { // 250ms = 4Hz
+            lastProgressTime = now;
+            ctx.postMessage({ id, type: 'generate_network_progress', payload: progress });
+          }
+        };
+
+        // Instantiate NetworkGenerator with options
+        const generatorOptions = {
+          maxSpecies: options?.maxSpecies ?? 10000,
+          maxReactions: options?.maxReactions ?? 100000,
+          maxIterations: options?.maxIterations ?? 100,
+          maxAgg: options?.maxAgg ?? 500,
+          maxStoich: options?.maxStoich ?? 500,
+          checkInterval: options?.checkInterval ?? 500,
+          memoryLimit: options?.memoryLimit ?? 1e9,
+        } satisfies NetworkGeneratorOptions;
+
+        const generator = new NetworkGenerator(generatorOptions);
+
+        // Generate network
+        const result = await generator.generate(seedSpecies, rules, progressCallback, controller.signal);
+        ensureNotCancelled(id);
+
+        // Convert result back to BNGLModel
+        const generatedModel: BNGLModel = {
+          ...model,
+          species: result.species.map(s => ({ name: BNGLParser.speciesGraphToString(s.graph), initialConcentration: s.concentration || 0 })),
+          reactions: result.reactions.map(r => ({
+            reactants: r.reactants.map(idx => BNGLParser.speciesGraphToString(result.species[idx].graph)),
+            products: r.products.map(idx => BNGLParser.speciesGraphToString(result.species[idx].graph)),
+            rate: r.rate.toString(),
+            rateConstant: r.rate
+          })),
+        };
+        ensureNotCancelled(id);
+
+        const response: WorkerResponse = { id, type: 'generate_network_success', payload: generatedModel };
+        ctx.postMessage(response);
+      } catch (error) {
+        const response: WorkerResponse = { id, type: 'generate_network_error', payload: serializeError(error) };
+        ctx.postMessage(response);
+      } finally {
+        markJobComplete(id);
+      }
+    })();
     return;
   }
 

@@ -1,0 +1,46 @@
+begin model
+begin parameters
+    k_xa_activate 0.3
+    k_auto 0.1
+    k_fibrin 0.6
+    k_inhibit 0.05
+    k_decay 0.02
+end parameters
+
+begin molecule types
+    FactorXa(state~inactive~active)
+    Prothrombin(state~inactive~active)
+    Thrombin(state~low~high)
+    Fibrinogen(state~soluble~fibrin)
+    Antithrombin(state~free~bound)
+end molecule types
+
+begin seed species
+    FactorXa(state~inactive) 40
+    Prothrombin(state~inactive) 100
+    Thrombin(state~low) 5
+    Fibrinogen(state~soluble) 120
+    Antithrombin(state~free) 80
+end seed species
+
+begin reaction rules
+    FactorXa(state~inactive) -> FactorXa(state~active) k_xa_activate
+    FactorXa(state~active) + Prothrombin(state~inactive) -> FactorXa(state~active) + Prothrombin(state~active) k_xa_activate
+    Prothrombin(state~active) -> Thrombin(state~high) k_auto
+    Thrombin(state~high) + Fibrinogen(state~soluble) -> Thrombin(state~high) + Fibrinogen(state~fibrin) k_fibrin
+    Thrombin(state~high) + Antithrombin(state~free) -> Thrombin(state~low) + Antithrombin(state~bound) k_inhibit
+    Antithrombin(state~bound) -> Antithrombin(state~free) k_decay
+    FactorXa(state~active) -> FactorXa(state~inactive) k_decay
+end reaction rules
+
+begin observables
+    Molecules Active_FactorXa FactorXa(state~active)
+    Molecules Thrombin_Activity Thrombin(state~high)
+    Molecules Fibrin Fibrinogen(state~fibrin)
+end observables
+
+begin actions
+    generate_network({overwrite=>1})
+    simulate({method=>"ode",t_start=>0,t_end=>60,n_steps=>150})
+end actions
+end model

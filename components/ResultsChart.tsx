@@ -49,7 +49,7 @@ export const ResultsChart: React.FC<ResultsChartProps> = ({ results, model, visi
 
   if (!results || results.data.length === 0) {
     return (
-      <Card className="h-96 flex items-center justify-center">
+      <Card className="flex h-96 max-w-full items-center justify-center overflow-hidden">
         <p className="text-slate-500">Run a simulation to see the results.</p>
       </Card>
     );
@@ -106,7 +106,7 @@ export const ResultsChart: React.FC<ResultsChartProps> = ({ results, model, visi
   const currentDomain = zoomHistory.length > 0 ? zoomHistory[zoomHistory.length - 1] : undefined;
 
   return (
-    <Card>
+    <Card className="max-w-full overflow-hidden">
       <ResponsiveContainer width="100%" height={400}>
         <LineChart 
           data={results.data} 

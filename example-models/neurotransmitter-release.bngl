@@ -1,0 +1,47 @@
+begin model
+begin parameters
+    k_influx 0.5
+    k_clear 0.1
+    k_snare 0.4
+    k_fusion 0.35
+    k_response 0.3
+    k_reset 0.08
+end parameters
+
+begin molecule types
+    Calcium(level~low~high)
+    SNARE(state~closed~open)
+    Vesicle(state~docked~fused)
+    Postsynaptic(state~rest~active)
+end molecule types
+
+begin seed species
+    Calcium(level~low) 100
+    SNARE(state~closed) 60
+    Vesicle(state~docked) 40
+    Postsynaptic(state~rest) 40
+end seed species
+
+begin reaction rules
+    Calcium(level~low) -> Calcium(level~high) k_influx
+    Calcium(level~high) + SNARE(state~closed) -> Calcium(level~high) + SNARE(state~open) k_snare
+    SNARE(state~open) + Vesicle(state~docked) -> SNARE(state~open) + Vesicle(state~fused) k_fusion
+    Vesicle(state~fused) + Postsynaptic(state~rest) -> Vesicle(state~fused) + Postsynaptic(state~active) k_response
+    Postsynaptic(state~active) -> Postsynaptic(state~rest) k_reset
+    Vesicle(state~fused) -> Vesicle(state~docked) k_reset
+    SNARE(state~open) -> SNARE(state~closed) k_reset
+    Calcium(level~high) -> Calcium(level~low) k_clear
+end reaction rules
+
+begin observables
+    Molecules High_Calcium Calcium(level~high)
+    Molecules Open_SNARE SNARE(state~open)
+    Molecules Fused_Vesicle Vesicle(state~fused)
+    Molecules Postsynaptic_Response Postsynaptic(state~active)
+end observables
+
+begin actions
+    generate_network({overwrite=>1})
+    simulate({method=>"ode",t_start=>0,t_end=>40,n_steps=>120})
+end actions
+end model

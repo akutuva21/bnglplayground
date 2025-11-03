@@ -1,0 +1,38 @@
+begin model
+begin parameters
+    k_influx 0.5
+    k_release 0.3
+    k_pump 0.4
+    k_leak 0.05
+end parameters
+
+begin molecule types
+    Calcium_cyto()
+    Calcium_store()
+    Calcium_ext()
+end molecule types
+
+begin seed species
+    Calcium_cyto() 10
+    Calcium_store() 200
+    Calcium_ext() 500
+end seed species
+
+begin observables
+    Molecules Cytosolic Calcium_cyto()
+    Molecules Stored Calcium_store()
+    Molecules Extracellular Calcium_ext()
+end observables
+
+begin reaction rules
+    Calcium_store() -> Calcium_cyto() k_release
+    Calcium_cyto() -> Calcium_ext() k_pump
+    Calcium_ext() -> Calcium_cyto() k_influx
+    Calcium_cyto() -> Calcium_store() k_leak
+end reaction rules
+
+begin actions
+    generate_network({overwrite=>1})
+    simulate({method=>"ode",t_end=>80,n_steps=>160})
+end actions
+end model

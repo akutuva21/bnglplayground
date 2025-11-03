@@ -1,0 +1,40 @@
+begin model
+begin parameters
+    k_on 0.002
+    k_off 0.0005
+    k_cat 0.05
+    k_on_i 0.0025
+    k_off_i 0.0004
+end parameters
+
+begin molecule types
+    Enzyme(s)
+    Substrate(b)
+    Inhibitor(b)
+    Product()
+end molecule types
+
+begin seed species
+    Enzyme(s) 50
+    Substrate(b) 300
+    Inhibitor(b) 150
+end seed species
+
+begin observables
+    Molecules Free_enzyme Enzyme(s)
+    Molecules Complex Enzyme(s!1).Substrate(b!1)
+    Molecules Inhibited Enzyme(s!1).Inhibitor(b!1)
+    Molecules Product Product()
+end observables
+
+begin reaction rules
+    Enzyme(s) + Substrate(b) <-> Enzyme(s!1).Substrate(b!1) k_on, k_off
+    Enzyme(s!1).Substrate(b!1) -> Enzyme(s) + Product() k_cat
+    Enzyme(s) + Inhibitor(b) <-> Enzyme(s!2).Inhibitor(b!2) k_on_i, k_off_i
+end reaction rules
+
+begin actions
+    generate_network({overwrite=>1})
+    simulate({method=>"ode",t_end=>180,n_steps=>180})
+end actions
+end model

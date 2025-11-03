@@ -1,0 +1,35 @@
+begin model
+begin parameters
+    k1 0.001
+    k2 0.0001
+    k3 0.1
+end parameters
+
+begin molecule types
+    E(s)
+    S(e)
+    P(e)
+end molecule types
+
+begin seed species
+    E(s) 100
+    S(e) 1000
+end seed species
+
+begin observables
+    Molecules Substrate S()
+    Molecules Product P()
+    Molecules Enzyme E()
+    Molecules Complex E(s!1).S(e!1)
+end observables
+
+begin reaction rules
+    E(s) + S(e) <-> E(s!1).S(e!1) k1, k2
+    E(s!1).S(e!1) -> E(s) + P(e) k3
+end reaction rules
+
+begin actions
+    generate_network({overwrite=>1})
+    simulate({method=>"ode",t_end=>200,n_steps=>200})
+end actions
+end model

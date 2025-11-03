@@ -1,0 +1,43 @@
+begin model
+begin parameters
+    k_bind 0.012
+    k_unbind 0.0012
+    k_lck 0.45
+    k_zap 0.35
+    k_reset 0.08
+end parameters
+
+begin molecule types
+    TCR(p,state~inactive~active)
+    pMHC(r)
+    Lck(state~off~on)
+    ZAP70(phos~U~P)
+end molecule types
+
+begin seed species
+    TCR(p,state~inactive) 80
+    pMHC(r) 60
+    Lck(state~off) 40
+    ZAP70(phos~U) 70
+end seed species
+
+begin reaction rules
+    TCR(p,state~inactive) + pMHC(r) <-> TCR(p!1,state~inactive).pMHC(r!1) k_bind, k_unbind
+    Lck(state~off) + TCR(p!1,state~inactive).pMHC(r!1) -> Lck(state~on) + TCR(p!1,state~active).pMHC(r!1) k_lck
+    Lck(state~on) -> Lck(state~off) k_reset
+    TCR(p,state~active) + ZAP70(phos~U) -> TCR(p,state~active) + ZAP70(phos~P) k_zap
+    ZAP70(phos~P) -> ZAP70(phos~U) k_reset
+    TCR(p,state~active) -> TCR(p,state~inactive) k_reset
+end reaction rules
+
+begin observables
+    Molecules Bound_TCR TCR(p!+,state~inactive)
+    Molecules Active_TCR TCR(state~active)
+    Molecules Phospho_ZAP70 ZAP70(phos~P)
+end observables
+
+begin actions
+    generate_network({overwrite=>1})
+    simulate({method=>"ode",t_start=>0,t_end=>60,n_steps=>150})
+end actions
+end model

@@ -1,0 +1,52 @@
+begin model
+begin parameters
+    k_bind 1.0
+    k_unbind 0.1
+    k_act1 0.5
+    k_deact1 0.05
+    k_act2 0.4
+    k_deact2 0.04
+    k_act3 0.3
+    k_deact3 0.03
+end parameters
+
+begin molecule types
+    Ligand(r)
+    Receptor(l,state~inactive~active)
+    MAPKKK(state~U~P)
+    MAPKK(state~U~P)
+    MAPK(state~U~P)
+end molecule types
+
+begin seed species
+    Ligand(r) 100
+    Receptor(l,state~inactive) 50
+    MAPKKK(state~U) 30
+    MAPKK(state~U) 100
+    MAPK(state~U) 200
+end seed species
+
+begin observables
+    Molecules Active_Receptor Receptor(state~active)
+    Molecules MAPKKK_P MAPKKK(state~P)
+    Molecules MAPKK_P MAPKK(state~P)
+    Molecules MAPK_P MAPK(state~P)
+end observables
+
+begin reaction rules
+    Ligand(r) + Receptor(l,state~inactive) <-> Ligand(r!1).Receptor(l!1,state~inactive) k_bind, k_unbind
+    Ligand(r!1).Receptor(l!1,state~inactive) -> Ligand(r!1).Receptor(l!1,state~active) k_act1
+    Receptor(state~active) -> Receptor(state~inactive) k_deact1
+    Receptor(state~active) + MAPKKK(state~U) -> Receptor(state~active) + MAPKKK(state~P) k_act2
+    MAPKKK(state~P) -> MAPKKK(state~U) k_deact2
+    MAPKKK(state~P) + MAPKK(state~U) -> MAPKKK(state~P) + MAPKK(state~P) k_act3
+    MAPKK(state~P) -> MAPKK(state~U) k_deact3
+    MAPKK(state~P) + MAPK(state~U) -> MAPKK(state~P) + MAPK(state~P) k_act3
+    MAPK(state~P) -> MAPK(state~U) k_deact3
+end reaction rules
+
+begin actions
+    generate_network({overwrite=>1})
+    simulate({method=>"ode",t_end=>60,n_steps=>120})
+end actions
+end model

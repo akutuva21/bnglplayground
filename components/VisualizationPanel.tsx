@@ -29,7 +29,7 @@ export const VisualizationPanel: React.FC<VisualizationPanelProps> = ({ model, r
   }, [model]);
 
   return (
-    <div className="h-full">
+    <div className="flex h-full min-w-0 flex-col overflow-hidden">
       <Tabs>
         <TabList>
           <Tab>Time Course</Tab>

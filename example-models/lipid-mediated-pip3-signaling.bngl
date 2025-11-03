@@ -1,0 +1,45 @@
+begin model
+begin parameters
+    k_activate 0.25
+    k_convert 0.45
+    k_pdk1 0.35
+    k_pten 0.15
+    k_reset 0.05
+end parameters
+
+begin molecule types
+    PI3K(state~inactive~active)
+    PIP2(state~present~consumed)
+    PIP3(state~low~high)
+    PTEN(state~off~on)
+    PDK1(state~inactive~active)
+end molecule types
+
+begin seed species
+    PI3K(state~inactive) 30
+    PIP2(state~present) 80
+    PIP3(state~low) 20
+    PTEN(state~on) 20
+    PDK1(state~inactive) 40
+end seed species
+
+begin reaction rules
+    PI3K(state~inactive) -> PI3K(state~active) k_activate
+    PI3K(state~active) + PIP2(state~present) -> PI3K(state~active) + PIP2(state~consumed) + PIP3(state~high) k_convert
+    PIP3(state~high) + PDK1(state~inactive) -> PIP3(state~high) + PDK1(state~active) k_pdk1
+    PTEN(state~on) + PIP3(state~high) -> PTEN(state~on) + PIP3(state~low) k_pten
+    PDK1(state~active) -> PDK1(state~inactive) k_reset
+    PI3K(state~active) -> PI3K(state~inactive) k_reset
+end reaction rules
+
+begin observables
+    Molecules Active_PI3K PI3K(state~active)
+    Molecules PIP3_High PIP3(state~high)
+    Molecules Active_PDK1 PDK1(state~active)
+end observables
+
+begin actions
+    generate_network({overwrite=>1})
+    simulate({method=>"ode",t_start=>0,t_end=>70,n_steps=>140})
+end actions
+end model

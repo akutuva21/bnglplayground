@@ -1,0 +1,39 @@
+begin model
+begin parameters
+    k_bind 1.0
+    k_unbind 0.1
+    k_phos 0.5
+    k_dephos 0.2
+end parameters
+
+begin molecule types
+    Kinase(b)
+    Phosphatase(b)
+    Substrate(y1~U~P,y2~U~P)
+end molecule types
+
+begin seed species
+    Kinase(b) 50
+    Phosphatase(b) 40
+    Substrate(y1~U,y2~U) 200
+end seed species
+
+begin observables
+    Molecules Unphosphorylated Substrate(y1~U,y2~U)
+    Molecules SingleP_y1 Substrate(y1~P,y2~U)
+    Molecules SingleP_y2 Substrate(y1~U,y2~P)
+    Molecules DoubleP Substrate(y1~P,y2~P)
+end observables
+
+begin reaction rules
+    Kinase(b) + Substrate(y1~U) -> Kinase(b) + Substrate(y1~P) k_phos
+    Kinase(b) + Substrate(y2~U) -> Kinase(b) + Substrate(y2~P) k_phos
+    Phosphatase(b) + Substrate(y1~P) -> Phosphatase(b) + Substrate(y1~U) k_dephos
+    Phosphatase(b) + Substrate(y2~P) -> Phosphatase(b) + Substrate(y2~U) k_dephos
+end reaction rules
+
+begin actions
+    generate_network({overwrite=>1})
+    simulate({method=>"ode",t_end=>80,n_steps=>160})
+end actions
+end model

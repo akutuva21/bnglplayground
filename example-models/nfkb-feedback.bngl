@@ -1,0 +1,36 @@
+begin model
+begin parameters
+    k_activate 0.4
+    k_inhibit 0.2
+    k_synth 0.6
+    k_deg 0.1
+    k_export 0.3
+end parameters
+
+begin molecule types
+    NFkB(loc~cyto~nuc)
+    IkB()
+end molecule types
+
+begin seed species
+    NFkB(loc~cyto) 100
+end seed species
+
+begin observables
+    Molecules Nuclear NFkB(loc~nuc)
+    Molecules Inhibitor IkB()
+end observables
+
+begin reaction rules
+    NFkB(loc~cyto) -> NFkB(loc~nuc) k_activate
+    NFkB(loc~nuc) -> NFkB(loc~cyto) k_export
+    NFkB(loc~nuc) -> NFkB(loc~nuc) + IkB() k_synth
+    IkB() + NFkB(loc~cyto) -> IkB() k_inhibit
+    IkB() -> 0 k_deg
+end reaction rules
+
+begin actions
+    generate_network({overwrite=>1})
+    simulate({method=>"ode",t_end=>150,n_steps=>300})
+end actions
+end model

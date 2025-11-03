@@ -1,3 +1,4 @@
+// @ts-nocheck
 import React, { useRef, useEffect } from 'react';
 
 interface MonacoEditorProps {
@@ -53,69 +54,74 @@ export const MonacoEditor: React.FC<MonacoEditorProps> = ({
     onChangeRef.current = onChange;
   }, [onChange]);
 
-  // Effect 1: Create/dispose editor when language or theme changes
+  // Effect 1: Create editor on mount and dispose on unmount
   useEffect(() => {
     let isCancelled = false;
     let editor: any = null;
+    let contentListener: any = null;
 
-    loadMonaco().then(monaco => {
-      if (isCancelled || !editorRef.current) return;
-      monacoRef.current = monaco;
+    loadMonaco()
+      .then(monaco => {
+        if (isCancelled || !editorRef.current) return;
+        monacoRef.current = monaco;
 
-      // Register BNGL language once
-      if (!monaco.languages.getLanguages().some(({ id }: {id: string}) => id === 'bngl')) {
-        monaco.languages.register({ id: 'bngl' });
-        monaco.languages.setMonarchTokensProvider('bngl', {
-          keywords: [
-            'begin', 'end', 'model', 'parameters', 'molecule', 'types', 'seed',
-            'species', 'observables', 'functions', 'reaction', 'rules', 'actions',
-            'generate_network', 'simulate', 'method', 't_end', 'n_steps', 'ode', 'ssa',
-            'overwrite'
-          ],
-          tokenizer: {
-            root: [
-              [/#.*$/, 'comment'],
-              [/[a-zA-Z_]\w*/, {
-                cases: {
-                  '@keywords': 'keyword',
-                  '@default': 'identifier'
-                }
-              }],
-              [/([a-zA-Z_]\w*)\s*\(/, 'type.identifier'],
-              [/\d+(\.\d+)?(e[+-]?\d+)?/, 'number'],
-              [/->|<->/, 'operator'],
-              [/[()\[\]{},.!~+@]/, 'delimiter'],
+        // Register BNGL language once
+        if (!monaco.languages.getLanguages().some(({ id }: { id: string }) => id === 'bngl')) {
+          monaco.languages.register({ id: 'bngl' });
+          monaco.languages.setMonarchTokensProvider('bngl', {
+            keywords: [
+              'begin', 'end', 'model', 'parameters', 'molecule', 'types', 'seed',
+              'species', 'observables', 'functions', 'reaction', 'rules', 'actions',
+              'generate_network', 'simulate', 'method', 't_end', 'n_steps', 'ode', 'ssa',
+              'overwrite',
             ],
-          },
+            tokenizer: {
+              root: [
+                [/#.*$/, 'comment'],
+                [/[a-zA-Z_]\w*/, {
+                  cases: {
+                    '@keywords': 'keyword',
+                    '@default': 'identifier',
+                  },
+                }],
+                [/([a-zA-Z_]\w*)\s*\(/, 'type.identifier'],
+                [/\d+(\.\d+)?(e[+-]?\d+)?/, 'number'],
+                [/->|<->/, 'operator'],
+                [/[()\[\]{},.!~+@]/, 'delimiter'],
+              ],
+            },
+          });
+        }
+
+        editor = monaco.editor.create(editorRef.current, {
+          value,
+          language,
+          theme: theme === 'dark' ? 'vs-dark' : 'vs',
+          automaticLayout: true,
+          minimap: { enabled: false },
+          wordWrap: 'on',
+          fontSize: 13,
+          lineNumbers: 'on',
+          scrollBeyondLastLine: false,
         });
-      }
 
-      // Create editor
-      editor = monaco.editor.create(editorRef.current, {
-        value,
-        language,
-        theme: theme === 'dark' ? 'vs-dark' : 'vs',
-        automaticLayout: true,
-        minimap: { enabled: false },
-        wordWrap: 'on',
-        fontSize: 13,
-        lineNumbers: 'on',
-        scrollBeyondLastLine: false,
-      });
-      
-      editorInstanceRef.current = editor;
+        editorInstanceRef.current = editor;
 
-      editor.onDidChangeModelContent(() => {
-        onChangeRef.current(editor.getValue());
+        contentListener = editor.onDidChangeModelContent(() => {
+          onChangeRef.current(editor.getValue());
+        });
+      })
+      .catch(error => {
+        if (!isCancelled) {
+          console.error('Failed to initialize Monaco Editor:', error);
+        }
       });
-    }).catch(error => {
-      if (!isCancelled) {
-        console.error("Failed to initialize Monaco Editor:", error);
-      }
-    });
 
     return () => {
       isCancelled = true;
+      if (contentListener) {
+        contentListener.dispose();
+      }
       if (editor) {
         try {
           editor.dispose();
@@ -125,7 +131,26 @@ export const MonacoEditor: React.FC<MonacoEditorProps> = ({
       }
       editorInstanceRef.current = null;
     };
-  }, [language, theme, value]);  // ← CRITICAL: Must include 'value'
+  }, []);
+
+  // Effect 1b: Update theme dynamically
+  useEffect(() => {
+    const monaco = monacoRef.current;
+    const editor = editorInstanceRef.current;
+    if (!monaco || !editor) return;
+    monaco.editor.setTheme(theme === 'dark' ? 'vs-dark' : 'vs');
+  }, [theme]);
+
+  // Effect 1c: Update language without recreating the editor
+  useEffect(() => {
+    const monaco = monacoRef.current;
+    const editor = editorInstanceRef.current;
+    if (!monaco || !editor) return;
+    const model = editor.getModel();
+    if (model) {
+      monaco.editor.setModelLanguage(model, language);
+    }
+  }, [language]);
 
   // Effect 2: Sync external value changes
   useEffect(() => {

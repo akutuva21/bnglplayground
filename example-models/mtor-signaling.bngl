@@ -1,0 +1,46 @@
+begin model
+begin parameters
+    k_rheb 0.3
+    k_mtor 0.4
+    k_s6k 0.35
+    k_ampk 0.2
+    k_reset 0.06
+end parameters
+
+begin molecule types
+    Rheb(state~GDP~GTP)
+    MTORC1(state~inactive~active)
+    S6K(phos~U~P)
+    AMPK(state~off~on)
+end molecule types
+
+begin seed species
+    Rheb(state~GDP) 50
+    MTORC1(state~inactive) 35
+    S6K(phos~U) 80
+    AMPK(state~off) 40
+end seed species
+
+begin reaction rules
+    Rheb(state~GDP) -> Rheb(state~GTP) k_rheb
+    Rheb(state~GTP) + MTORC1(state~inactive) -> Rheb(state~GTP) + MTORC1(state~active) k_mtor
+    MTORC1(state~active) + S6K(phos~U) -> MTORC1(state~active) + S6K(phos~P) k_s6k
+    AMPK(state~off) -> AMPK(state~on) k_ampk
+    AMPK(state~on) + Rheb(state~GTP) -> AMPK(state~on) + Rheb(state~GDP) k_ampk
+    S6K(phos~P) -> S6K(phos~U) k_reset
+    MTORC1(state~active) -> MTORC1(state~inactive) k_reset
+    AMPK(state~on) -> AMPK(state~off) k_reset
+end reaction rules
+
+begin observables
+    Molecules Active_Rheb Rheb(state~GTP)
+    Molecules Active_MTORC1 MTORC1(state~active)
+    Molecules Phospho_S6K S6K(phos~P)
+    Molecules Active_AMPK AMPK(state~on)
+end observables
+
+begin actions
+    generate_network({overwrite=>1})
+    simulate({method=>"ode",t_start=>0,t_end=>100,n_steps=>200})
+end actions
+end model

@@ -1,0 +1,45 @@
+begin model
+begin parameters
+    k_unfold 0.04
+    k_chaperone 0.3
+    k_perk 0.5
+    k_translation 0.25
+    k_recovery 0.08
+end parameters
+
+begin molecule types
+    UnfoldedProtein(level~low~high)
+    PERK(state~inactive~active)
+    EIF2A(phos~U~P)
+    Chaperone(level~basal~induced)
+end molecule types
+
+begin seed species
+    UnfoldedProtein(level~low) 40
+    PERK(state~inactive) 30
+    EIF2A(phos~U) 100
+    Chaperone(level~basal) 50
+end seed species
+
+begin reaction rules
+    UnfoldedProtein(level~low) -> UnfoldedProtein(level~high) k_unfold
+    UnfoldedProtein(level~high) + PERK(state~inactive) -> UnfoldedProtein(level~high) + PERK(state~active) k_perk
+    PERK(state~active) + EIF2A(phos~U) -> PERK(state~active) + EIF2A(phos~P) k_perk
+    EIF2A(phos~P) -> EIF2A(phos~U) k_recovery
+    EIF2A(phos~P) + Chaperone(level~basal) -> EIF2A(phos~P) + Chaperone(level~induced) k_translation
+    Chaperone(level~induced) + UnfoldedProtein(level~high) -> Chaperone(level~induced) + UnfoldedProtein(level~low) k_chaperone
+    PERK(state~active) -> PERK(state~inactive) k_recovery
+    Chaperone(level~induced) -> Chaperone(level~basal) k_recovery
+end reaction rules
+
+begin observables
+    Molecules Active_PERK PERK(state~active)
+    Molecules Phospho_EIF2A EIF2A(phos~P)
+    Molecules Induced_Chaperone Chaperone(level~induced)
+end observables
+
+begin actions
+    generate_network({overwrite=>1})
+    simulate({method=>"ode",t_start=>0,t_end=>120,n_steps=>240})
+end actions
+end model

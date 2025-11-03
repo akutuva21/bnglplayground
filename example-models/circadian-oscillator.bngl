@@ -1,0 +1,36 @@
+begin model
+begin parameters
+    k_synth 0.6
+    k_phos 0.3
+    k_feedback 0.1
+    k_deg 0.05
+end parameters
+
+begin molecule types
+    mRNA()
+    Protein(state~U~P)
+end molecule types
+
+begin seed species
+    mRNA() 10
+    Protein(state~U) 50
+end seed species
+
+begin observables
+    Molecules Transcript mRNA()
+    Molecules Protein_total Protein()
+end observables
+
+begin reaction rules
+    Protein(state~P) -> Protein(state~U) k_deg
+    mRNA() -> mRNA() + Protein(state~U) k_synth
+    Protein(state~U) -> Protein(state~P) k_phos
+    Protein(state~P) -> 0 k_deg
+    Protein(state~P) + mRNA() -> Protein(state~P) k_feedback
+end reaction rules
+
+begin actions
+    generate_network({overwrite=>1})
+    simulate({method=>"ode",t_end=>240,n_steps=>480})
+end actions
+end model

@@ -1,0 +1,35 @@
+begin model
+begin parameters
+    k_bind 0.01
+    k_unbind 0.002
+    k_signal 0.2
+    k_decay 0.05
+end parameters
+
+begin molecule types
+    CellNotch(state~inactive~active)
+    CellDelta(level~low~high)
+end molecule types
+
+begin seed species
+    CellNotch(state~inactive) 1
+    CellDelta(level~low) 1
+end seed species
+
+begin observables
+    Molecules Active_notch CellNotch(state~active)
+    Molecules High_delta CellDelta(level~high)
+end observables
+
+begin reaction rules
+    CellNotch(state~inactive) + CellDelta(level~high) <-> CellNotch(state~active) + CellDelta(level~high) k_bind, k_unbind
+    CellNotch(state~active) -> CellNotch(state~inactive) k_decay
+    CellNotch(state~inactive) -> CellNotch(state~inactive) + CellDelta(level~low) k_signal
+    CellDelta(level~low) -> CellDelta(level~high) k_signal
+end reaction rules
+
+begin actions
+    generate_network({overwrite=>1})
+    simulate({method=>"ode",t_end=>150,n_steps=>300})
+end actions
+end model

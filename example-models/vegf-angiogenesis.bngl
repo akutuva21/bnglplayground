@@ -1,0 +1,45 @@
+begin model
+begin parameters
+    k_bind 0.02
+    k_unbind 0.002
+    k_receptor 0.38
+    k_erk 0.34
+    k_migration 0.28
+    k_reset 0.07
+end parameters
+
+begin molecule types
+    VEGF(r)
+    VEGFR(l,state~inactive~active)
+    ERK(phos~U~P)
+    Endothelial(state~quiescent~migratory)
+end molecule types
+
+begin seed species
+    VEGF(r) 70
+    VEGFR(l,state~inactive) 50
+    ERK(phos~U) 90
+    Endothelial(state~quiescent) 40
+end seed species
+
+begin reaction rules
+    VEGF(r) + VEGFR(l,state~inactive) <-> VEGF(r!1).VEGFR(l!1,state~inactive) k_bind, k_unbind
+    VEGF(r!1).VEGFR(l!1,state~inactive) -> VEGF(r!1).VEGFR(l!1,state~active) k_receptor
+    VEGFR(l,state~active) + ERK(phos~U) -> VEGFR(l,state~active) + ERK(phos~P) k_erk
+    ERK(phos~P) + Endothelial(state~quiescent) -> ERK(phos~P) + Endothelial(state~migratory) k_migration
+    Endothelial(state~migratory) -> Endothelial(state~quiescent) k_reset
+    ERK(phos~P) -> ERK(phos~U) k_reset
+    VEGFR(l,state~active) -> VEGFR(l,state~inactive) k_reset
+end reaction rules
+
+begin observables
+    Molecules Active_VEGFR VEGFR(state~active)
+    Molecules Phospho_ERK ERK(phos~P)
+    Molecules Migratory_Endothelial Endothelial(state~migratory)
+end observables
+
+begin actions
+    generate_network({overwrite=>1})
+    simulate({method=>"ode",t_start=>0,t_end=>90,n_steps=>180})
+end actions
+end model

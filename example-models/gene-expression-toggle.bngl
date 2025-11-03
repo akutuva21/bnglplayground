@@ -1,0 +1,41 @@
+begin model
+begin parameters
+    k_activate 0.002
+    k_repress 0.001
+    k_transcription 1.0
+    k_translation 5.0
+    k_mrna_deg 0.2
+    k_protein_deg 0.05
+end parameters
+
+begin molecule types
+    Gene(active~off~on)
+    mRNA()
+    Protein()
+end molecule types
+
+begin seed species
+    Gene(active~off) 1
+end seed species
+
+begin observables
+    Molecules Promoter_on Gene(active~on)
+    Molecules Promoter_off Gene(active~off)
+    Molecules Transcripts mRNA()
+    Molecules Protein Protein()
+end observables
+
+begin reaction rules
+    Gene(active~off) -> Gene(active~on) k_activate
+    Gene(active~on) -> Gene(active~off) k_repress
+    Gene(active~on) -> Gene(active~on) + mRNA() k_transcription
+    mRNA() -> mRNA() + Protein() k_translation
+    mRNA() -> 0 k_mrna_deg
+    Protein() -> 0 k_protein_deg
+end reaction rules
+
+begin actions
+    generate_network({overwrite=>1})
+    simulate({method=>"ode",t_end=>200,n_steps=>200})
+end actions
+end model

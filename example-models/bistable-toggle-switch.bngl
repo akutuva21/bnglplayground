@@ -1,0 +1,51 @@
+begin model
+begin parameters
+    k_transcribe 0.8
+    k_translate 4.0
+    k_bind 0.003
+    k_unbind 0.0008
+    k_deg_m 0.15
+    k_deg_p 0.08
+end parameters
+
+begin molecule types
+    GeneL(state~free~bound)
+    GeneR(state~free~bound)
+    mRNA_L()
+    mRNA_R()
+    ProteinL()
+    ProteinR()
+end molecule types
+
+begin seed species
+    GeneL(state~free) 1
+    GeneR(state~free) 1
+end seed species
+
+begin observables
+    Molecules Protein_L ProteinL()
+    Molecules Protein_R ProteinR()
+    Molecules GeneL_bound GeneL(state~bound)
+    Molecules GeneR_bound GeneR(state~bound)
+end observables
+
+begin reaction rules
+    GeneL(state~free) -> GeneL(state~free) + mRNA_L() k_transcribe
+    GeneR(state~free) -> GeneR(state~free) + mRNA_R() k_transcribe
+    mRNA_L() -> mRNA_L() + ProteinL() k_translate
+    mRNA_R() -> mRNA_R() + ProteinR() k_translate
+    ProteinR() + GeneL(state~free) -> ProteinR() + GeneL(state~bound) k_bind
+    ProteinL() + GeneR(state~free) -> ProteinL() + GeneR(state~bound) k_bind
+    GeneL(state~bound) -> GeneL(state~free) k_unbind
+    GeneR(state~bound) -> GeneR(state~free) k_unbind
+    mRNA_L() -> 0 k_deg_m
+    mRNA_R() -> 0 k_deg_m
+    ProteinL() -> 0 k_deg_p
+    ProteinR() -> 0 k_deg_p
+end reaction rules
+
+begin actions
+    generate_network({overwrite=>1})
+    simulate({method=>"ode",t_end=>250,n_steps=>250})
+end actions
+end model

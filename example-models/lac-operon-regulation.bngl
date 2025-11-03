@@ -1,0 +1,53 @@
+begin model
+begin parameters
+    k_bind 0.002
+    k_unbind 0.02
+    k_transcribe 1.0
+    k_translate 5.0
+    k_mrna_deg 0.2
+    k_beta_deg 0.05
+    k_import 0.1
+    k_conversion 0.08
+    k_allo_deg 0.04
+end parameters
+
+begin molecule types
+    LacI(state~free~bound)
+    Promoter(state~off~on)
+    mRNA()
+    BetaGal()
+    Lactose(loc~ext~int)
+    Allolactose()
+end molecule types
+
+begin seed species
+    LacI(state~free) 20
+    Promoter(state~off) 1
+    Lactose(loc~ext) 200
+end seed species
+
+begin observables
+    Molecules Promoter_active Promoter(state~on)
+    Molecules Beta_gal BetaGal()
+    Molecules Lactose_internal Lactose(loc~int)
+    Molecules Allolactose_pool Allolactose()
+end observables
+
+begin reaction rules
+    Promoter(state~on) + LacI(state~free) -> Promoter(state~off) + LacI(state~bound) k_bind
+    LacI(state~bound) -> LacI(state~free) k_unbind
+    Allolactose() + Promoter(state~off) -> Allolactose() + Promoter(state~on) k_conversion
+    Promoter(state~on) -> Promoter(state~on) + mRNA() k_transcribe
+    mRNA() -> mRNA() + BetaGal() k_translate
+    mRNA() -> 0 k_mrna_deg
+    BetaGal() -> 0 k_beta_deg
+    Lactose(loc~ext) -> Lactose(loc~int) k_import
+    BetaGal() + Lactose(loc~int) -> BetaGal() + Allolactose() k_conversion
+    Allolactose() -> 0 k_allo_deg
+end reaction rules
+
+begin actions
+    generate_network({overwrite=>1})
+    simulate({method=>"ode",t_end=>180,n_steps=>180})
+end actions
+end model

@@ -1,0 +1,29 @@
+// graph/core/Species.ts
+import { SpeciesGraph } from './SpeciesGraph';
+
+export class Species {
+  graph: SpeciesGraph;
+  index: number;  // unique index in network
+  concentration?: number;
+
+  constructor(graph: SpeciesGraph, index: number, concentration?: number) {
+    this.graph = graph;
+    this.index = index;
+    this.concentration = concentration;
+  }
+
+  /**
+   * BioNetGen: Species::toString()
+   */
+  toString(): string {
+    return this.graph.toString();
+  }
+
+  /**
+   * Get canonical string for species identification
+   */
+  get canonicalString(): string {
+    // TODO: Implement canonicalization
+    return this.toString();
+  }
+}

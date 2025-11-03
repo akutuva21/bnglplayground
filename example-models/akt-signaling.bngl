@@ -1,0 +1,45 @@
+begin model
+begin parameters
+    k_bind 0.01
+    k_unbind 0.001
+    k_activate 0.5
+    k_pi3k 0.4
+    k_phos 0.6
+    k_reset 0.1
+end parameters
+
+begin molecule types
+    GrowthFactor(r)
+    RTK(l,state~inactive~active)
+    PI3K(state~off~on)
+    AKT(phos~U~P)
+end molecule types
+
+begin seed species
+    GrowthFactor(r) 80
+    RTK(l,state~inactive) 40
+    PI3K(state~off) 50
+    AKT(phos~U) 100
+end seed species
+
+begin reaction rules
+    GrowthFactor(r) + RTK(l,state~inactive) <-> GrowthFactor(r!1).RTK(l!1,state~inactive) k_bind, k_unbind
+    GrowthFactor(r!1).RTK(l!1,state~inactive) -> GrowthFactor(r!1).RTK(l!1,state~active) k_activate
+    RTK(l,state~active) + PI3K(state~off) -> RTK(l,state~active) + PI3K(state~on) k_pi3k
+    PI3K(state~on) + AKT(phos~U) -> PI3K(state~on) + AKT(phos~P) k_phos
+    AKT(phos~P) -> AKT(phos~U) k_reset
+    PI3K(state~on) -> PI3K(state~off) k_reset
+    RTK(l,state~active) -> RTK(l,state~inactive) k_reset
+end reaction rules
+
+begin observables
+    Molecules Active_RTK RTK(state~active)
+    Molecules Active_PI3K PI3K(state~on)
+    Molecules Phospho_AKT AKT(phos~P)
+end observables
+
+begin actions
+    generate_network({overwrite=>1})
+    simulate({method=>"ode",t_start=>0,t_end=>100,n_steps=>200})
+end actions
+end model

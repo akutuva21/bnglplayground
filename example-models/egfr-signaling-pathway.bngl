@@ -1,0 +1,38 @@
+begin model
+begin parameters
+    k_bind 1.0
+    k_unbind 0.1
+    k_phos 1.0
+    k_dephos 0.5
+end parameters
+
+begin molecule types
+    EGF(r)
+    EGFR(l,y~U~P)
+end molecule types
+
+begin seed species
+    EGF(r) 100
+    EGFR(l,y~U) 50
+end seed species
+
+begin reaction rules
+    EGF(r) + EGFR(l) <-> EGF(r!1).EGFR(l!1) k_bind, k_unbind
+    EGFR(l,y~U) -> EGFR(l,y~P) k_phos
+    EGF(r!1).EGFR(l!1,y~U) -> EGF(r!1).EGFR(l!1,y~P) k_phos
+    EGFR(l,y~P) -> EGFR(l,y~U) k_dephos
+    EGF(r!1).EGFR(l!1,y~P) -> EGF(r!1).EGFR(l!1,y~U) k_dephos
+end reaction rules
+
+begin observables
+    Molecules EGF_free EGF(r)
+    Molecules EGFR_free EGFR(l)
+    Molecules Bound_EGFR EGFR(l!+)
+    Molecules Phospho_EGFR EGFR(y~P)
+end observables
+
+begin actions
+    generate_network({overwrite=>1})
+    simulate({method=>"ode",t_end=>50,n_steps=>100})
+end actions
+end model

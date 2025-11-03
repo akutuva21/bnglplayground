@@ -1,0 +1,46 @@
+begin model
+begin parameters
+    k_damage 0.05
+    k_sense 0.4
+    k_signal 0.3
+    k_repair 0.2
+    k_reset 0.07
+end parameters
+
+begin molecule types
+    DNA(status~intact~damaged~repaired)
+    ATM(state~inactive~active)
+    P53(level~basal~elevated)
+    RepairComplex(state~available~engaged)
+end molecule types
+
+begin seed species
+    DNA(status~intact) 30
+    ATM(state~inactive) 25
+    P53(level~basal) 60
+    RepairComplex(state~available) 20
+end seed species
+
+begin reaction rules
+    DNA(status~intact) -> DNA(status~damaged) k_damage
+    DNA(status~damaged) + ATM(state~inactive) -> DNA(status~damaged) + ATM(state~active) k_sense
+    ATM(state~active) + P53(level~basal) -> ATM(state~active) + P53(level~elevated) k_signal
+    P53(level~elevated) + RepairComplex(state~available) -> P53(level~elevated) + RepairComplex(state~engaged) k_signal
+    RepairComplex(state~engaged) + DNA(status~damaged) -> RepairComplex(state~engaged) + DNA(status~repaired) k_repair
+    ATM(state~active) -> ATM(state~inactive) k_reset
+    P53(level~elevated) -> P53(level~basal) k_reset
+    RepairComplex(state~engaged) -> RepairComplex(state~available) k_reset
+end reaction rules
+
+begin observables
+    Molecules Damaged_DNA DNA(status~damaged)
+    Molecules Active_ATM ATM(state~active)
+    Molecules Elevated_P53 P53(level~elevated)
+    Molecules Repair_Engaged RepairComplex(state~engaged)
+end observables
+
+begin actions
+    generate_network({overwrite=>1})
+    simulate({method=>"ode",t_start=>0,t_end=>150,n_steps=>300})
+end actions
+end model

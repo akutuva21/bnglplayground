@@ -69,7 +69,7 @@ export const ExampleGalleryModal: React.FC<ExampleGalleryModalProps> = ({ isOpen
                 </button>
             ))}
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 max-h-[60vh] overflow-y-auto pr-2">
+  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 max-h-[75vh] overflow-y-auto pr-2">
           {filteredExamples.length > 0 ? filteredExamples.map(example => (
             <Card key={example.id} className="flex flex-col">
               <div className="flex-grow">

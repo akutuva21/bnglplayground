@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Complex Model</title>
+</head>
+<body>
+    <h1>Testing Complex Model Parsing</h1>
+    <div id="output"></div>
+
+    <script type="module">
+        const output = document.getElementById('output');
+
+        // Test the complex model
+        const complexModel = `
+begin model
+
+begin parameters
+    # Initial amounts of molecules
+    TGFb_0                  1.0
+    IL6_0                   1.0
+    s_TGFb                  1.0     # Global scaling factor for TGFb doses
+    b_TGFb                  0.0     # Basal TGFb offset (model units)
+    s_IL6                   1.0     # Global scaling factor for IL6 doses
+    b_IL6                   0.0     # Basal IL6 offset (model units)
+
+    # Reversible ligand binding parameters
+    # IL-6 Pathway
+    kf_il6_bind             0.3          # IL-6 forward binding rate
+    kr_il6_bind             0.05         # IL-6 reverse binding rate
+    k_act_il6r              3.0          # IL6R activation rate
+    k_deact_il6r            0.01         # IL6R deactivation rate
+
+    # TGFb Pathway
+    kf_tgfb_bind            0.05         # TGFb forward binding rate
+    kr_tgfb_bind            0.2          # TGFb reverse binding rate
+    k_act_tgfbr             0.8          # TGFbR activation rate
+    k_deact_tgfbr           0.02         # TGFbR deactivation rate
+
+    # SMAD3 dynamics
+    k_phos_smad3            0.015        # Further reduced from 0.03 to minimize baseline SMAD3 phosphorylation
+    k_dephos_smad3          0.035        # Increased from 0.02 to make SMAD3 more responsive to changes
+    kr_smad3_bind           0.05         # New reverse rate for SMAD3-TGFbR binding
+
+    # STAT3 dynamics
+    kf_stat3_bind           0.12         # Increased from 0.05 for stronger STAT3 response to IL6
+    k_phos_stat3            0.15         # Increased from 0.08 for faster STAT3 phosphorylation
+    kf_dimer                0.5          # STAT3 dimerization forward rate
+    k_dephos_stat3d         0.06         # Reduced from 0.08 to maintain STAT3 activity longer
+    kr_dimer                0.05         # Reverse rate for STAT3 dimer dissociation
+    k_dephos_stat3p         0.08         # Dephosphorylation of monomeric pSTAT3
+
+    # SMAD3-TGFbR binding parameters
+    kf_smad3_bind           0.08         # SMAD3 forward binding rate (slower than STAT3)
+    kr_s3stat3d             0.2          # Reverse rate for SMAD3-STAT3d complex
+    k_dephos_s3stat3d       0.3          # Dephosphorylation of SMAD3 within STAT3 complex
+
+    # Complex formation
+    kf_s3s4                 0.6          # SMAD3-SMAD4 complex formation rate
+    kf_s3stat3d             4.0          # SMAD3-STAT3 complex formation rate
+
+    # PKA activation parameters
+    kf_pka_bind             1.0          # PKA binding to SMAD3/4 complex
+    k_phos_pka              0.5          # Catalytic rate of PKA autophosphorylation
+    k_off_pka               0.1          # PKA unbinding rate from SMAD3/4 complex
+
+    # Initial amounts of cellular components
+    IL6R_0                  250.0        # Further increased from 200 for even stronger IL6 response
+    TGFbR_0                 40.0         # Further reduced from 60 to minimize baseline TGFb activity
+    SMAD3_0                 45.0         # Further reduced from 60 to limit baseline SMAD3 pool even more
+    SMAD4_0                 30.0         # Further reduced from 40 to limit SMAD3-SMAD4 complexes
+    STAT3m_0                250.0        # Increased from 220 for stronger STAT3-SMAD3 crosstalk
+    PKA_0                   50.0
+
+end parameters
+
+begin molecule types
+    TGFb(r)
+    IL6(r)
+    IL6R(l_bind,activity~I~A,stat3_site)
+    TGFbR(l_bind,activity~I~A,smad3_site)
+    SMAD3(phos~U~P,smad4_site,stat3_site,pka_site,tgfbr_site)
+    SMAD4(s3_site)
+    STAT3m(il6r_site,phos~U~P,d,s3_site)
+    PKA(s3s4_site,phos~U~P)
+end molecule types
+
+begin seed species
+    TGFb(r)                                                             s_TGFb*(TGFb_0 + b_TGFb)
+    IL6(r)                                                              s_IL6*(IL6_0 + b_IL6)
+    IL6R(l_bind,activity~I,stat3_site)                                 IL6R_0
+    TGFbR(l_bind,activity~I,smad3_site)                                TGFbR_0
+    SMAD3(phos~U,smad4_site,stat3_site,pka_site,tgfbr_site)            SMAD3_0
+    SMAD4(s3_site)                                                     SMAD4_0
+    STAT3m(il6r_site,phos~U,d,s3_site)                                 STAT3m_0
+    PKA(s3s4_site,phos~U)                                              PKA_0
+end seed species
+
+begin observables
+    Molecules Free_IL6_obs IL6(r)
+    Molecules Free_TGFb_obs TGFb(r)
+    Molecules IL6R_Active IL6R(activity~A)
+    Molecules TGFbR_Active TGFbR(activity~A)
+    Molecules pSMAD3_obs SMAD3(phos~P)
+    Molecules pSTAT3_obs STAT3m(phos~P,d)
+    Molecules STAT3d_active_obs STAT3m(phos~P,d!+)
+    Molecules S3S4_complex_obs SMAD3(smad4_site!1,tgfbr_site).SMAD4(s3_site!1)
+    Molecules S3STAT3d_complex_obs SMAD3(stat3_site!1).STAT3m(s3_site!1)
+    Molecules PKA_active PKA(phos~P)
+end observables
+
+begin reaction rules
+    # Biologically correct reversible ligand binding
+    # 0. IL-6 Signaling Pathway
+    IL6(r) + IL6R(l_bind,activity~I) <-> IL6(r!1).IL6R(l_bind!1,activity~I) kf_il6_bind,kr_il6_bind
+    IL6(r!+).IL6R(l_bind!+,activity~I) -> IL6(r!+).IL6R(l_bind!+,activity~A) k_act_il6r
+    IL6(r!1).IL6R(l_bind!1,activity~A) -> IL6(r) + IL6R(l_bind,activity~I,stat3_site) k_deact_il6r
+
+    # 0b. TGFb Signaling Pathway (similar to IL-6)
+    TGFb(r) + TGFbR(l_bind,activity~I) <-> TGFb(r!1).TGFbR(l_bind!1,activity~I) kf_tgfb_bind,kr_tgfb_bind
+    TGFb(r!+).TGFbR(l_bind!+,activity~I) -> TGFb(r!+).TGFbR(l_bind!+,activity~A) k_act_tgfbr
+    TGFb(r!1).TGFbR(l_bind!1,activity~A) -> TGFb(r) + TGFbR(l_bind,activity~I,smad3_site) k_deact_tgfbr
+
+    # 1. & 2. SMAD3 Dynamics
+    SMAD3(phos~U,smad4_site,stat3_site,pka_site,tgfbr_site!1).TGFbR(activity~A,smad3_site!1) -> SMAD3(phos~P,smad4_site,stat3_site,pka_site,tgfbr_site)+TGFbR(activity~A,smad3_site) k_phos_smad3
+    SMAD3(phos~P,smad4_site,stat3_site,pka_site,tgfbr_site) -> SMAD3(phos~U,smad4_site,stat3_site,pka_site,tgfbr_site) k_dephos_smad3
+
+    # 3. STAT3 Pathway
+    STAT3m(il6r_site!1,phos~U,d).IL6R(activity~A,stat3_site!1) -> STAT3m(il6r_site,phos~P,d)+IL6R(activity~A,stat3_site) kf_stat3_bind
+    STAT3m(il6r_site,phos~P,d) -> STAT3m(il6r_site,phos~U,d) k_dephos_stat3p
+
+    # 4. STAT3 Dephosphorylation
+    STAT3m(il6r_site,phos~P,d!1).STAT3m(il6r_site,phos~P,d!1) -> STAT3m(il6r_site,phos~U,d)+STAT3m(il6r_site,phos~U,d) k_dephos_stat3d
+
+    # 5. & 6. Complex Formation
+    # Bind SMAD3 to one STAT3 monomer within the dimer: use !1 for SMAD3-STAT3 bond and !2 for STAT3-STAT3 dimer bond
+    SMAD3(stat3_site!1).STAT3m(s3_site!1) <-> SMAD3(stat3_site!1).STAT3m(s3_site!1) kf_s3stat3d,kr_s3stat3d
+    SMAD3(phos~P,smad4_site!1).SMAD4(s3_site!1) <-> SMAD3(phos~P,smad4_site!1).SMAD4(s3_site!1) kf_s3s4,kr_s3s4
+
+    # 7. PKA Activation (biologically accurate two-step mechanism)
+    PKA(s3s4_site!1,phos~U).SMAD3(smad4_site!1,pka_site!2).SMAD4(s3_site!1) -> PKA(s3s4_site!1,phos~P).SMAD3(smad4_site!1,pka_site!2).SMAD4(s3_site!1) k_phos_pka
+    PKA(s3s4_site!1,phos~P).SMAD3(smad4_site!1,pka_site!2).SMAD4(s3_site!1) -> PKA(s3s4_site,phos~P)+SMAD3(smad4_site!1,pka_site).SMAD4(s3_site!1) k_off_pka
+
+    # 8. STAT3-SMAD3 Complex Sequestration (IL-6 inhibitory mechanism)
+    SMAD3(stat3_site!1).STAT3m(s3_site!1,phos~P,d) -> SMAD3(stat3_site!1).STAT3m(s3_site!1,phos~U,d) k_dephos_s3stat3d
+
+end reaction rules
+
+begin actions
+    generate_network({overwrite=>1})
+    simulate({method=>"ode", t_end=>100, n_steps=>100})
+end actions
+end model
+`;
+
+        output.innerHTML = '<p>Testing complex model parsing...</p>';
+
+        try {
+            // Create web worker
+            const worker = new Worker('./services/bnglWorker.ts', { type: 'module' });
+
+            worker.onmessage = (event) => {
+                const { id, type, payload } = event.data;
+                if (type === 'parse_success') {
+                    output.innerHTML += '<p>✓ BNGL parsing successful!</p>';
+                    output.innerHTML += `<p>Parameters: ${Object.keys(payload.parameters).length}</p>`;
+                    output.innerHTML += `<p>Molecule types: ${payload.moleculeTypes.length}</p>`;
+                    output.innerHTML += `<p>Seed species: ${payload.species.length}</p>`;
+                    output.innerHTML += `<p>Reaction rules: ${payload.reactionRules.length}</p>`;
+
+                    // Now try network generation
+                    output.innerHTML += '<p>Testing network generation...</p>';
+                    worker.postMessage({
+                        id: 2,
+                        type: 'generate_network',
+                        payload: { model: payload, options: {} }
+                    });
+                } else if (type === 'generate_network_success') {
+                    output.innerHTML += '<p>✓ Network generation successful!</p>';
+                    output.innerHTML += `<p>Species: ${payload.species.length}</p>`;
+                    output.innerHTML += `<p>Reactions: ${payload.reactions.length}</p>`;
+                } else if (type === 'parse_error' || type === 'generate_network_error') {
+                    output.innerHTML += `<p>✗ Error: ${payload.message}</p>`;
+                    console.error('Worker error:', payload);
+                }
+            };
+
+            worker.onerror = (error) => {
+                output.innerHTML += `<p>✗ Worker error: ${error.message}</p>`;
+                console.error('Worker error:', error);
+            };
+
+            // Start parsing
+            worker.postMessage({
+                id: 1,
+                type: 'parse',
+                payload: complexModel
+            });
+
+        } catch (error) {
+            output.innerHTML += `<p>✗ Error: ${error.message}</p>`;
+            console.error('Error:', error);
+        }
+    </script>
+</body>
+</html>

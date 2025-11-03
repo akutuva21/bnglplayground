@@ -2,43 +2,63 @@
 
 # BioNetGen Web Simulator
 
-Interactive BNGL playground for building models, inspecting generated networks, and running ODE/SSA simulations entirely in the browser.
+An interactive workspace that lets you explore BioNetGen (BNGL) models, watch molecular networks unfold, and simulate system behaviour directly in your browser.
 
 </div>
 
-## Features
+> **Fixture reminder:** Whenever you update one of the curated BNGL examples, regenerate its reference data with `npm run generate:gdat -- <paths...>` and rerun `npm run test` before you commit.
 
-- Monaco-powered BNGL editor with syntax highlighting, example gallery, and file import/export helpers
-- Dedicated web worker that parses BNGL, expands rule-based networks, and runs adaptive RK4 ODE or Gillespie SSA simulations
-- Multi-tab visualization panel with time-course plots (Recharts), Cytoscape-powered reaction network graph, rule cartoons, parameter editing, structure analysis, and steady-state finder
-- Light/dark theming, responsive Tailwind UI, and rich status messaging for parse/simulation feedback
-- Stand-alone scripts for validating the worker bundle (`scripts/testParse.mjs`, `scripts/runWorkerTest.mjs`) and a growing Vitest suite for catalog integrity checks
+## What You Can Do
 
-## Quick Start
+- Start from dozens of ready-made biological BNGL models or import your own.
+- Edit models in a Monaco-powered code editor with helpful syntax colouring.
+- Parse models into reaction networks and view the results as charts, graphs, or cartoons.
+- Run deterministic (ODE) or stochastic (SSA) simulations without leaving the browser.
+- Explore time-course plots, wiring diagrams, parameter tables, sensitivity tools, and more via modular tabs.
+- Switch between light and dark themes and keep track of status messages as you work.
+- Use the included Node scripts and Vitest suite to ensure examples still behave as expected.
 
-**Prerequisites:** Node.js 20+
+## Getting Started (No Deep Tech Needed)
+
+1. **Install Node.js 20+** so you can run the helper scripts that power the simulator.
+2. **Install project dependencies**:
 
 ```bash
 npm install
 npm run dev
 ```
 
-The Vite dev server runs on `http://localhost:3000/` and hot-reloads as you edit code. No external API keys are required.
+3. Point your browser to `http://localhost:3000/` to open the simulator. It automatically reloads when you make changes.
+
+Everything runs locally—no external API keys or internet services are required once the dependencies are installed.
 
 ## Available Scripts
 
 - `npm run dev` – start the Vite dev server
 - `npm run build` – produce a production build in `dist/`
 - `npm run preview` – serve the production bundle locally
-- `npm run test` – execute Vitest unit tests
+- `npm run test` – run the full Vitest suite (including GDAT regression checks)
+- `npm run test:watch` – start Vitest in watch mode for rapid feedback
+- `npm run generate:gdat` – regenerate BioNetGen GDAT fixtures (accepts optional paths)
 
-## Architecture Overview
+## Simulator Guide
 
-- **BNGL worker (`services/bnglService.ts`)** – embeds the parser/simulator inside `String.raw` template code so it executes inside a web worker; exposes `parse`, `simulate`, and `generateNetwork` APIs.
-- **UI shell (`App.tsx`)** – coordinates editor state, model parsing, simulation requests, and surface-level status handling.
-- **Visualization layer (`components/`)** – modular tabs for charts, network graph, rule cartoons, parameter editing, structural analysis, and steady-state exploration.
-- **Shared utilities (`constants.ts`, `types.ts`)** – typed BNGL model representations, initial template, and curated example catalog.
-- **Scripts (`scripts/`)** – Node-based harnesses that run the worker logic outside the browser for debugging and regression testing.
+- **Editor panel** – type or paste BNGL text, or load one of the curated examples. The editor highlights syntax and shows errors as you go.
+- **Parse model** – converts your BNGL text into a network description that the rest of the app can use.
+- **Run simulations** – choose ODE (predictable) or SSA (stochastic) methods; the simulator runs entirely in your browser’s worker thread so the page stays responsive.
+- **Visualization tabs** – switch between plots over time, a network graph, rule cartoons, parameter sliders, structural analysis, and steady-state tools. Each tab updates automatically after parsing or simulating.
+- **Example gallery** – browse 60 biologically inspired models with short descriptions and tags; great for inspiration or teaching.
+- **Identifiability analysis** – built-in Fisher Information Matrix tools let you inspect which parameters are distinguishable from data.
+
+Behind the scenes, the simulator uses a dedicated web worker to parse BNGL, expand rule-based networks, and perform simulations. This keeps the interface fluid even for larger models.
+
+### What’s Under the Hood (Short Tour)
+
+- **`App.tsx`** – orchestrates the UI, wiring the editor, worker calls, and tab views together.
+- **`components/`** – contains the visual building blocks (charts, graph, modals, tabs) written in React.
+- **`services/`** – houses the worker interface plus helpers for parsing, simulations, and identifiability calculations.
+- **`constants.ts` & `types.ts`** – define the curated example list and shared data structures.
+- **`scripts/`** – provides Node helpers for generating reference data and running regression checks outside the browser.
 
 ```
 .
@@ -58,7 +78,7 @@ The Vite dev server runs on `http://localhost:3000/` and hot-reloads as you edit
 	└── constants.spec.ts
 ```
 
-## Simulation Workflow
+## Daily Workflow
 
 1. Paste or load BNGL code in the editor (use the example gallery or upload a `.bngl` file).
 2. Click **Parse Model** to build the internal network representation and unlock visualization tabs.
@@ -67,11 +87,18 @@ The Vite dev server runs on `http://localhost:3000/` and hot-reloads as you edit
 
 ## Testing
 
-Vitest runs in a Node environment and currently covers the curated example catalog and synchronization with the default template.
+Vitest runs in a Node environment and now covers curated examples, worker utilities, and deterministic GDAT regression checks.
 
 ```bash
 npm run test
 ```
+
+The GDAT suite shells out to BioNetGen (`BNG2.pl`) for each example. You can:
+
+- Set environment variables `BNG2_PATH` and `PERL_CMD` so the tests/scripts find your installation, **or**
+- Edit `scripts/bngDefaults.js` to point `DEFAULT_BNG2_PATH` (and optionally `DEFAULT_PERL_CMD`) at the correct locations for your machine.
+
+If you do not have BioNetGen and Perl installed, the GDAT tests will skip automatically.
 
 ## Deployment Notes
 

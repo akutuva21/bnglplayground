@@ -1,0 +1,48 @@
+begin model
+begin parameters
+    k_bind 0.03
+    k_unbind 0.003
+    k_autophos 0.5
+    k_transfer 0.4
+    k_reset 0.08
+    k_dephos 0.06
+end parameters
+
+begin molecule types
+    Attractant(r)
+    MCP(l,state~inactive~active)
+    CheA(phos~U~P)
+    CheY(phos~U~P)
+    CheZ(state~free~bound)
+end molecule types
+
+begin seed species
+    Attractant(r) 70
+    MCP(l,state~inactive) 50
+    CheA(phos~U) 40
+    CheY(phos~U) 100
+    CheZ(state~free) 30
+end seed species
+
+begin reaction rules
+    Attractant(r) + MCP(l,state~inactive) <-> Attractant(r!1).MCP(l!1,state~inactive) k_bind, k_unbind
+    Attractant(r!1).MCP(l!1,state~inactive) -> Attractant(r!1).MCP(l!1,state~active) k_autophos
+    MCP(l,state~active) + CheA(phos~U) -> MCP(l,state~active) + CheA(phos~P) k_autophos
+    CheA(phos~P) + CheY(phos~U) -> CheA(phos~P) + CheY(phos~P) k_transfer
+    CheY(phos~P) + CheZ(state~free) -> CheY(phos~U) + CheZ(state~bound) k_dephos
+    CheZ(state~bound) -> CheZ(state~free) k_reset
+    CheA(phos~P) -> CheA(phos~U) k_reset
+    MCP(l,state~active) -> MCP(l,state~inactive) k_reset
+end reaction rules
+
+begin observables
+    Molecules Active_MCP MCP(state~active)
+    Molecules Phospho_CheA CheA(phos~P)
+    Molecules Phospho_CheY CheY(phos~P)
+end observables
+
+begin actions
+    generate_network({overwrite=>1})
+    simulate({method=>"ode",t_start=>0,t_end=>80,n_steps=>160})
+end actions
+end model

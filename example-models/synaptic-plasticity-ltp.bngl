@@ -1,0 +1,51 @@
+begin model
+begin parameters
+    k_release 0.08
+    k_unbind 0.008
+    k_open 0.4
+    k_camkii 0.35
+    k_ampa 0.3
+    k_pka 0.25
+    k_reset 0.07
+end parameters
+
+begin molecule types
+    Glutamate(r)
+    NMDA(l,state~blocked~open)
+    CaMKII(state~inactive~active)
+    AMPAR(location~cyto~synapse)
+    PKA(state~off~on)
+end molecule types
+
+begin seed species
+    Glutamate(r) 80
+    NMDA(l,state~blocked) 40
+    CaMKII(state~inactive) 60
+    AMPAR(location~cyto) 70
+    PKA(state~off) 50
+end seed species
+
+begin reaction rules
+    Glutamate(r) + NMDA(l,state~blocked) <-> Glutamate(r!1).NMDA(l!1,state~blocked) k_release, k_unbind
+    Glutamate(r!1).NMDA(l!1,state~blocked) -> Glutamate(r!1).NMDA(l!1,state~open) k_open
+    NMDA(l,state~open) + CaMKII(state~inactive) -> NMDA(l,state~open) + CaMKII(state~active) k_camkii
+    CaMKII(state~active) + AMPAR(location~cyto) -> CaMKII(state~active) + AMPAR(location~synapse) k_ampa
+    PKA(state~off) + AMPAR(location~synapse) -> PKA(state~on) + AMPAR(location~synapse) k_pka
+    PKA(state~on) -> PKA(state~off) k_reset
+    AMPAR(location~synapse) -> AMPAR(location~cyto) k_reset
+    CaMKII(state~active) -> CaMKII(state~inactive) k_reset
+    NMDA(l,state~open) -> NMDA(l,state~blocked) k_reset
+end reaction rules
+
+begin observables
+    Molecules Open_NMDA NMDA(state~open)
+    Molecules Active_CaMKII CaMKII(state~active)
+    Molecules Synaptic_AMPAR AMPAR(location~synapse)
+    Molecules Active_PKA PKA(state~on)
+end observables
+
+begin actions
+    generate_network({overwrite=>1})
+    simulate({method=>"ode",t_start=>0,t_end=>60,n_steps=>180})
+end actions
+end model

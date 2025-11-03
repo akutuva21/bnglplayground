@@ -18,6 +18,67 @@ interface EditorPanelProps {
   modelExists: boolean;
 }
 
+type ParsedSimulateOptions = {
+  t_end?: number;
+  n_steps?: number;
+};
+
+const SIMULATE_REGEX = /simulate(?:_(ode|ssa))?\s*\(\s*\{([\s\S]*?)\}\s*\)/gi;
+
+const DEFAULT_SIMULATION: Record<'ode' | 'ssa', { t_end: number; n_steps: number }> = {
+  ode: { t_end: 100, n_steps: 100 },
+  ssa: { t_end: 100, n_steps: 100 },
+};
+
+function extractSimulateOptions(source: string, preferredMethod: 'ode' | 'ssa'): ParsedSimulateOptions {
+  const matches: Array<{ method?: 'ode' | 'ssa'; options: ParsedSimulateOptions }> = [];
+
+  SIMULATE_REGEX.lastIndex = 0;
+  let simulateMatch: RegExpExecArray | null;
+  while ((simulateMatch = SIMULATE_REGEX.exec(source)) !== null) {
+    const [, methodSuffixRaw, block] = simulateMatch;
+    const entry: { method?: 'ode' | 'ssa'; options: ParsedSimulateOptions } = {
+      method: methodSuffixRaw ? (methodSuffixRaw.toLowerCase() as 'ode' | 'ssa') : undefined,
+      options: {},
+    };
+
+    const keyValueRegex = /(\w+)\s*=>\s*(?:"([^"]*)"|'([^']*)'|([^,\s}]+))/g;
+    let kvMatch: RegExpExecArray | null;
+    while ((kvMatch = keyValueRegex.exec(block)) !== null) {
+      const key = kvMatch[1];
+      const rawValue = kvMatch[2] ?? kvMatch[3] ?? kvMatch[4] ?? '';
+      if (key === 'method' && rawValue) {
+        const normalized = rawValue.toLowerCase();
+        if (normalized === 'ode' || normalized === 'ssa') {
+          entry.method = normalized;
+        }
+      } else if (key === 't_end') {
+        const num = Number(rawValue);
+        if (!Number.isNaN(num)) {
+          entry.options.t_end = num;
+        }
+      } else if (key === 'n_steps') {
+        const num = Number(rawValue);
+        if (!Number.isNaN(num)) {
+          entry.options.n_steps = num;
+        }
+      }
+    }
+
+    matches.push(entry);
+  }
+
+  if (matches.length === 0) {
+    return {};
+  }
+
+  const exact = matches.find((entry) => entry.method === preferredMethod);
+  const methodless = matches.find((entry) => entry.method === undefined);
+  const chosen = exact ?? methodless ?? matches[0];
+
+  return chosen.options;
+}
+
 export const EditorPanel: React.FC<EditorPanelProps> = ({
   code,
   onCodeChange,
@@ -48,16 +109,16 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
   };
   
   return (
-    <Card className="flex flex-col h-full">
+    <Card className="flex h-full flex-col overflow-hidden">
       <h2 className="text-xl font-bold mb-3 text-slate-800 dark:text-slate-100">BNGL Model Editor</h2>
-      <div className="flex-grow relative">
+      <div className="relative flex-1 min-h-0 overflow-hidden">
         <MonacoEditor
           language="bngl"
           value={code}
           onChange={(value) => onCodeChange(value || '')}
         />
       </div>
-      <div className="mt-4 flex flex-wrap gap-2 items-center justify-between">
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-2 shrink-0">
          <div className="flex flex-wrap gap-2">
             <Button onClick={() => setIsGalleryOpen(true)}>
               Examples
@@ -87,7 +148,15 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
                     ]}
                 />
                 <Button
-                  onClick={() => onSimulate({ method: simulationMethod, t_end: 100, n_steps: 100 })}
+                  onClick={() => {
+                    const parsed = extractSimulateOptions(code, simulationMethod);
+                    const defaults = DEFAULT_SIMULATION[simulationMethod];
+                    onSimulate({
+                      method: simulationMethod,
+                      t_end: parsed.t_end ?? defaults.t_end,
+                      n_steps: parsed.n_steps ?? defaults.n_steps,
+                    });
+                  }}
                   disabled={isSimulating || !modelExists}
                   variant="primary"
                 >

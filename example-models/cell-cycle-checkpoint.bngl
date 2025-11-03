@@ -1,0 +1,41 @@
+begin model
+begin parameters
+    k_cyclin_prod 0.2
+    k_cyclin_deg 0.05
+    k_activate 0.4
+    k_inactivate 0.1
+    k_checkpoint 0.3
+end parameters
+
+begin molecule types
+    Cyclin(level~low~high)
+    CDK(state~inactive~active)
+    Checkpoint(state~off~on)
+end molecule types
+
+begin seed species
+    Cyclin(level~low) 40
+    CDK(state~inactive) 40
+    Checkpoint(state~off) 20
+end seed species
+
+begin reaction rules
+    Cyclin(level~low) -> Cyclin(level~high) k_cyclin_prod
+    Cyclin(level~high) -> Cyclin(level~low) k_cyclin_deg
+    Cyclin(level~high) + CDK(state~inactive) -> Cyclin(level~high) + CDK(state~active) k_activate
+    CDK(state~active) + Checkpoint(state~off) -> CDK(state~active) + Checkpoint(state~on) k_checkpoint
+    Checkpoint(state~on) -> Checkpoint(state~off) k_inactivate
+    CDK(state~active) -> CDK(state~inactive) k_inactivate
+end reaction rules
+
+begin observables
+    Molecules Cyclin_High Cyclin(level~high)
+    Molecules Active_CDK CDK(state~active)
+    Molecules Checkpoint_On Checkpoint(state~on)
+end observables
+
+begin actions
+    generate_network({overwrite=>1})
+    simulate({method=>"ode",t_start=>0,t_end=>120,n_steps=>240})
+end actions
+end model

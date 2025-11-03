@@ -1,0 +1,40 @@
+begin model
+begin parameters
+    k_wnt 0.3
+    k_destruction 0.2
+    k_translocate 0.1
+    k_transcription 0.5
+    k_deg 0.05
+end parameters
+
+begin molecule types
+    Wnt(state~off~on)
+    BetaCatenin(loc~cyto~nuc)
+    TargetGene()
+end molecule types
+
+begin seed species
+    Wnt(state~off) 1
+    BetaCatenin(loc~cyto) 50
+end seed species
+
+begin observables
+    Molecules Active_wnt Wnt(state~on)
+    Molecules Nuclear_beta BetaCatenin(loc~nuc)
+    Molecules Target TargetGene()
+end observables
+
+begin reaction rules
+    Wnt(state~off) -> Wnt(state~on) k_wnt
+    BetaCatenin(loc~cyto) -> 0 k_destruction
+    Wnt(state~on) + BetaCatenin(loc~cyto) -> Wnt(state~on) + BetaCatenin(loc~nuc) k_translocate
+    BetaCatenin(loc~nuc) -> BetaCatenin(loc~cyto) k_deg
+    BetaCatenin(loc~nuc) -> BetaCatenin(loc~nuc) + TargetGene() k_transcription
+    TargetGene() -> 0 k_deg
+end reaction rules
+
+begin actions
+    generate_network({overwrite=>1})
+    simulate({method=>"ode",t_end=>160,n_steps=>320})
+end actions
+end model

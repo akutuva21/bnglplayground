@@ -11,7 +11,7 @@ export const Tabs: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [activeIndex, setActiveIndex] = useState(0);
   return (
     <TabsContext.Provider value={{ activeIndex, setActiveIndex }}>
-      <div>{children}</div>
+      <div className="flex h-full min-h-0 flex-col">{children}</div>
     </TabsContext.Provider>
   );
 };
@@ -56,8 +56,8 @@ export const Tab: React.FC<TabProps> = ({ children, isActive, onClick }) => {
 export const TabPanels: React.FC<{ children: React.ReactNode[] | React.ReactNode }> = ({ children }) => {
   const context = useContext(TabsContext);
   if (!context) throw new Error('TabPanels must be used within a Tabs component');
-  
-  return <div className="mt-4">{Children.toArray(children)[context.activeIndex]}</div>;
+
+  return <div className="mt-4 flex-1 min-h-0 overflow-hidden">{Children.toArray(children)[context.activeIndex]}</div>;
 };
 
 export const TabPanel: React.FC<{ children: React.ReactNode }> = ({ children }) => {

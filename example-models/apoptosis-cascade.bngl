@@ -1,0 +1,35 @@
+begin model
+begin parameters
+    k_initiator 0.01
+    k_effector 0.05
+    k_feedback 0.02
+    k_deg 0.01
+end parameters
+
+begin molecule types
+    Initiator(state~inactive~active)
+    Effector(state~inactive~active)
+end molecule types
+
+begin seed species
+    Initiator(state~inactive) 100
+    Effector(state~inactive) 200
+end seed species
+
+begin observables
+    Molecules Active_initiator Initiator(state~active)
+    Molecules Active_effector Effector(state~active)
+end observables
+
+begin reaction rules
+    Initiator(state~inactive) -> Initiator(state~active) k_initiator
+    Initiator(state~active) + Effector(state~inactive) -> Initiator(state~active) + Effector(state~active) k_effector
+    Effector(state~active) + Initiator(state~inactive) -> Effector(state~active) + Initiator(state~active) k_feedback
+    Effector(state~active) -> Effector(state~inactive) k_deg
+end reaction rules
+
+begin actions
+    generate_network({overwrite=>1})
+    simulate({method=>"ode",t_end=>120,n_steps=>240})
+end actions
+end model

@@ -1,0 +1,45 @@
+begin model
+begin parameters
+    k_prime 0.05
+    k_activation 0.4
+    k_assembly 0.3
+    k_processing 0.25
+    k_reset 0.07
+end parameters
+
+begin molecule types
+    Sensor(state~resting~primed~active)
+    ASC(state~free~clustered)
+    Caspase1(state~inactive~active)
+    IL1B(state~pro~mature)
+end molecule types
+
+begin seed species
+    Sensor(state~resting) 40
+    ASC(state~free) 60
+    Caspase1(state~inactive) 50
+    IL1B(state~pro) 80
+end seed species
+
+begin reaction rules
+    Sensor(state~resting) -> Sensor(state~primed) k_prime
+    Sensor(state~primed) -> Sensor(state~active) k_activation
+    Sensor(state~active) + ASC(state~free) -> Sensor(state~active) + ASC(state~clustered) k_assembly
+    ASC(state~clustered) + Caspase1(state~inactive) -> ASC(state~clustered) + Caspase1(state~active) k_assembly
+    Caspase1(state~active) + IL1B(state~pro) -> Caspase1(state~active) + IL1B(state~mature) k_processing
+    Caspase1(state~active) -> Caspase1(state~inactive) k_reset
+    ASC(state~clustered) -> ASC(state~free) k_reset
+    Sensor(state~active) -> Sensor(state~resting) k_reset
+end reaction rules
+
+begin observables
+    Molecules Primed_Sensor Sensor(state~primed)
+    Molecules Active_Caspase1 Caspase1(state~active)
+    Molecules Mature_IL1B IL1B(state~mature)
+end observables
+
+begin actions
+    generate_network({overwrite=>1})
+    simulate({method=>"ode",t_start=>0,t_end=>80,n_steps=>160})
+end actions
+end model

@@ -1,0 +1,45 @@
+begin model
+begin parameters
+    k_input 0.2
+    k_sense 0.005
+    k_relax 0.05
+    k_release 0.4
+    k_uptake 0.01
+    k_util 0.1
+    k_clear 0.2
+end parameters
+
+begin molecule types
+    Glucose_blood()
+    Glucose_cell()
+    Pancreas(state~resting~active)
+    Insulin()
+end molecule types
+
+begin seed species
+    Glucose_blood() 80
+    Pancreas(state~resting) 1
+end seed species
+
+begin observables
+    Molecules Blood_glucose Glucose_blood()
+    Molecules Cellular_glucose Glucose_cell()
+    Molecules Insulin_pool Insulin()
+    Molecules Active_pancreas Pancreas(state~active)
+end observables
+
+begin reaction rules
+    0 -> Glucose_blood() k_input
+    Pancreas(state~resting) + Glucose_blood() -> Pancreas(state~active) + Glucose_blood() k_sense
+    Pancreas(state~active) -> Pancreas(state~resting) k_relax
+    Pancreas(state~active) -> Pancreas(state~active) + Insulin() k_release
+    Insulin() + Glucose_blood() -> Insulin() + Glucose_cell() k_uptake
+    Glucose_cell() -> 0 k_util
+    Insulin() -> 0 k_clear
+end reaction rules
+
+begin actions
+    generate_network({overwrite=>1})
+    simulate({method=>"ode",t_end=>200,n_steps=>200})
+end actions
+end model

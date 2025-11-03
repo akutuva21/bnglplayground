@@ -1,0 +1,49 @@
+begin model
+begin parameters
+    k_bind 0.02
+    k_unbind 0.002
+    k_activate 0.4
+    k_hydrolysis 0.15
+    k_camp 0.5
+    k_reset 0.08
+end parameters
+
+begin molecule types
+    Epinephrine(r)
+    BetaReceptor(l,state~inactive~active)
+    Gs(alpha~GDP~GTP)
+    AC(activity~low~high)
+    cAMP(pool~basal~elevated)
+end molecule types
+
+begin seed species
+    Epinephrine(r) 60
+    BetaReceptor(l,state~inactive) 40
+    Gs(alpha~GDP) 30
+    AC(activity~low) 20
+    cAMP(pool~basal) 50
+end seed species
+
+begin reaction rules
+    Epinephrine(r) + BetaReceptor(l,state~inactive) <-> Epinephrine(r!1).BetaReceptor(l!1,state~inactive) k_bind, k_unbind
+    Epinephrine(r!1).BetaReceptor(l!1,state~inactive) -> Epinephrine(r!1).BetaReceptor(l!1,state~active) k_activate
+    BetaReceptor(l,state~active) + Gs(alpha~GDP) -> BetaReceptor(l,state~active) + Gs(alpha~GTP) k_activate
+    Gs(alpha~GTP) + AC(activity~low) -> Gs(alpha~GTP) + AC(activity~high) k_camp
+    AC(activity~high) + cAMP(pool~basal) -> AC(activity~high) + cAMP(pool~elevated) k_camp
+    Gs(alpha~GTP) -> Gs(alpha~GDP) k_hydrolysis
+    AC(activity~high) -> AC(activity~low) k_reset
+    cAMP(pool~elevated) -> cAMP(pool~basal) k_reset
+    BetaReceptor(l,state~active) -> BetaReceptor(l,state~inactive) k_reset
+end reaction rules
+
+begin observables
+    Molecules Active_BetaR BetaReceptor(state~active)
+    Molecules GTP_Gs Gs(alpha~GTP)
+    Molecules High_cAMP cAMP(pool~elevated)
+end observables
+
+begin actions
+    generate_network({overwrite=>1})
+    simulate({method=>"ode",t_start=>0,t_end=>120,n_steps=>240})
+end actions
+end model

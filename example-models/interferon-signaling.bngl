@@ -1,0 +1,45 @@
+begin model
+begin parameters
+    k_bind 0.018
+    k_unbind 0.0018
+    k_jak 0.45
+    k_stat 0.32
+    k_reset 0.075
+end parameters
+
+begin molecule types
+    IFN(r)
+    IFNAR(l,state~inactive~active)
+    TYK2(state~off~on)
+    STAT1(phos~U~P,loc~cyto~nuc)
+end molecule types
+
+begin seed species
+    IFN(r) 50
+    IFNAR(l,state~inactive) 35
+    TYK2(state~off) 30
+    STAT1(phos~U,loc~cyto) 120
+end seed species
+
+begin reaction rules
+    IFN(r) + IFNAR(l,state~inactive) <-> IFN(r!1).IFNAR(l!1,state~inactive) k_bind, k_unbind
+    IFN(r!1).IFNAR(l!1,state~inactive) -> IFN(r!1).IFNAR(l!1,state~active) k_jak
+    IFNAR(l,state~active) + TYK2(state~off) -> IFNAR(l,state~active) + TYK2(state~on) k_jak
+    TYK2(state~on) + STAT1(phos~U,loc~cyto) -> TYK2(state~on) + STAT1(phos~P,loc~cyto) k_stat
+    STAT1(phos~P,loc~cyto) -> STAT1(phos~P,loc~nuc) k_stat
+    STAT1(phos~P,loc~nuc) -> STAT1(phos~U,loc~cyto) k_reset
+    TYK2(state~on) -> TYK2(state~off) k_reset
+    IFNAR(l,state~active) -> IFNAR(l,state~inactive) k_reset
+end reaction rules
+
+begin observables
+    Molecules Active_IFNAR IFNAR(state~active)
+    Molecules Active_TYK2 TYK2(state~on)
+    Molecules Nuclear_STAT1 STAT1(phos~P,loc~nuc)
+end observables
+
+begin actions
+    generate_network({overwrite=>1})
+    simulate({method=>"ode",t_start=>0,t_end=>80,n_steps=>160})
+end actions
+end model

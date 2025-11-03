@@ -1,0 +1,43 @@
+begin model
+begin parameters
+    k_on 0.002
+    k_off 0.0005
+    k_cat 0.02
+    k_cat_active 0.1
+    k_on_act 0.0015
+    k_off_act 0.0003
+end parameters
+
+begin molecule types
+    Enzyme(s,c,a~inactive~active)
+    Substrate(b)
+    Activator(b)
+    Product()
+end molecule types
+
+begin seed species
+    Enzyme(s,c,a~inactive) 40
+    Substrate(b) 200
+    Activator(b) 150
+end seed species
+
+begin observables
+    Molecules Active_enzyme Enzyme(a~active)
+    Molecules Inactive_enzyme Enzyme(a~inactive)
+    Molecules Product Product()
+end observables
+
+begin reaction rules
+    Enzyme(c,a~inactive) + Activator(b) <-> Enzyme(c!1,a~active).Activator(b!1) k_on_act, k_off_act
+    Enzyme(s,a~inactive) + Substrate(b) <-> Enzyme(s!2,a~inactive).Substrate(b!2) k_on, k_off
+    Enzyme(s,a~active) + Substrate(b) <-> Enzyme(s!3,a~active).Substrate(b!3) k_on, k_off
+    Enzyme(s!2,a~inactive).Substrate(b!2) -> Enzyme(s,a~inactive) + Product() k_cat
+    Enzyme(s!3,a~active).Substrate(b!3) -> Enzyme(s,a~active) + Product() k_cat_active
+    Enzyme(c!1,a~active).Activator(b!1) -> Enzyme(c,a~active) + Activator(b) k_off_act
+end reaction rules
+
+begin actions
+    generate_network({overwrite=>1})
+    simulate({method=>"ode",t_end=>150,n_steps=>150})
+end actions
+end model

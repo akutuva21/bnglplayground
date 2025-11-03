@@ -1,0 +1,41 @@
+begin model
+begin parameters
+    k_c3_activate 0.3
+    k_c3_decay 0.05
+    k_c5_convert 0.4
+    k_c5_decay 0.08
+    k_mac_form 0.2
+    k_mac_decay 0.05
+end parameters
+
+begin molecule types
+    C3(state~inactive~active)
+    C5(state~inactive~active)
+    MAC()
+end molecule types
+
+begin seed species
+    C3(state~inactive) 60
+    C5(state~inactive) 40
+end seed species
+
+begin observables
+    Molecules C3_active C3(state~active)
+    Molecules C5_active C5(state~active)
+    Molecules MAC_pool MAC()
+end observables
+
+begin reaction rules
+    C3(state~inactive) -> C3(state~active) k_c3_activate
+    C3(state~active) -> C3(state~inactive) k_c3_decay
+    C3(state~active) + C5(state~inactive) -> C3(state~active) + C5(state~active) k_c5_convert
+    C5(state~active) -> C5(state~inactive) k_c5_decay
+    C5(state~active) -> C5(state~active) + MAC() k_mac_form
+    MAC() -> 0 k_mac_decay
+end reaction rules
+
+begin actions
+    generate_network({overwrite=>1})
+    simulate({method=>"ode",t_end=>120,n_steps=>240})
+end actions
+end model
