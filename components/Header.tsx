@@ -17,12 +17,18 @@ export const Header: React.FC<HeaderProps> = ({ onAboutClick }) => {
       <div className="container mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between items-center py-3">
           <div className="flex items-center gap-2">
-            <svg width="32" height="32" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" className="text-primary">
-                <circle cx="50" cy="50" r="45" fill="none" stroke="currentColor" strokeWidth="10"/>
-                <path d="M25 50 A 25 25 0 0 1 75 50" fill="none" stroke="currentColor" strokeWidth="8"/>
-                <path d="M50 25 A 25 25 0 0 1 50 75" fill="none" stroke="currentColor" strokeWidth="8"/>
-            </svg>
-            <h1 className="text-2xl font-bold text-slate-800 dark:text-slate-100">BioNetGen Playground</h1>
+            <div className="relative flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded bg-white shadow-sm ring-1 ring-slate-200 dark:bg-slate-700 dark:ring-slate-600">
+              <img
+                src="/bnglplayground/logo.jpg"
+                alt="BioNetGen Visualizer logo"
+                className="h-full w-full object-contain object-center"
+                loading="lazy"
+              />
+            </div>
+            <div className="flex flex-col">
+              <h1 className="text-xl font-semibold leading-tight text-slate-800 dark:text-slate-100 sm:text-2xl">BioNetGen Visualizer</h1>
+              <p className="text-sm text-slate-500 dark:text-slate-300 sm:text-base">Explore, simulate, and understand rule-based biological models</p>
+            </div>
           </div>
           <div className="flex items-center gap-4">
             <Button onClick={onAboutClick} variant="ghost">About</Button>
