@@ -2,12 +2,12 @@ import React, { useState } from 'react';
 import { BNGLModel, SimulationOptions, SimulationResults } from '../types';
 import { Tabs, TabList, Tab, TabPanels, TabPanel } from './ui/Tabs';
 import { ResultsChart } from './ResultsChart';
-import { NetworkGraph } from './NetworkGraph';
 import { StructureAnalysisTab } from './tabs/StructureAnalysisTab';
 import { SteadyStateTab } from './tabs/SteadyStateTab';
 import { ParameterScanTab } from './tabs/ParameterScanTab';
 import { FIMTab } from './tabs/FIMTab';
 import { CartoonTab } from './tabs/CartoonTab';
+import { RegulatoryTab } from './tabs/RegulatoryTab';
 
 interface VisualizationPanelProps {
   model: BNGLModel | null;
@@ -19,6 +19,7 @@ interface VisualizationPanelProps {
 
 export const VisualizationPanel: React.FC<VisualizationPanelProps> = ({ model, results, onSimulate, isSimulating, onCancelSimulation }) => {
   const [visibleSpecies, setVisibleSpecies] = useState<Set<string>>(new Set());
+  const [selectedRuleId, setSelectedRuleId] = useState<string | null>(null);
 
   React.useEffect(() => {
     if (model) {
@@ -28,12 +29,32 @@ export const VisualizationPanel: React.FC<VisualizationPanelProps> = ({ model, r
     }
   }, [model]);
 
+  React.useEffect(() => {
+    if (!model || model.reactionRules.length === 0) {
+      setSelectedRuleId(null);
+      return;
+    }
+
+    setSelectedRuleId((prev) => {
+      if (!prev) {
+        return model.reactionRules[0].name ?? 'rule_1';
+      }
+
+      const hasRule = model.reactionRules.some((rule, index) => {
+        const ruleId = rule.name ?? `rule_${index + 1}`;
+        return ruleId === prev;
+      });
+
+      return hasRule ? prev : model.reactionRules[0].name ?? 'rule_1';
+    });
+  }, [model]);
+
   return (
     <div className="flex h-full min-w-0 flex-col overflow-hidden">
       <Tabs>
         <TabList>
           <Tab>Time Course</Tab>
-          <Tab>Network Graph</Tab>
+          <Tab>Regulation</Tab>
           <Tab>Rule Cartoons</Tab>
           <Tab>Structure</Tab>
           <Tab>Steady State</Tab>
@@ -45,10 +66,15 @@ export const VisualizationPanel: React.FC<VisualizationPanelProps> = ({ model, r
             <ResultsChart results={results} model={model} visibleSpecies={visibleSpecies} onVisibleSpeciesChange={setVisibleSpecies} />
           </TabPanel>
           <TabPanel>
-            <NetworkGraph model={model} results={results} />
+            <RegulatoryTab
+              model={model}
+              results={results}
+              selectedRuleId={selectedRuleId}
+              onSelectRule={setSelectedRuleId}
+            />
           </TabPanel>
           <TabPanel>
-            <CartoonTab model={model} />
+            <CartoonTab model={model} selectedRuleId={selectedRuleId} onSelectRule={setSelectedRuleId} />
           </TabPanel>
           <TabPanel>
              <StructureAnalysisTab model={model} />

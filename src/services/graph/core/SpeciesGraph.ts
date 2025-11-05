@@ -1,20 +1,23 @@
 // graph/core/SpeciesGraph.ts
 import { Molecule } from './Molecule';
-import { Component } from './Component';
 
 export class SpeciesGraph {
   molecules: Molecule[];
   adjacency: Map<string, string>;  // "molIdx.compIdx" => "molIdx.compIdx"
   compartment?: string;  // species-level compartment
+  adjacencyBitset?: Uint32Array;
 
   // Cached properties
-  private _canonical?: string;
   private _stringExact?: string;
-  private _stringID?: string;
+  private _componentOffsets?: number[];
+  private _componentCount?: number;
 
   constructor(molecules: Molecule[] = []) {
     this.molecules = molecules;
     this.adjacency = new Map();
+    this.adjacencyBitset = undefined;
+    this._componentOffsets = undefined;
+    this._componentCount = undefined;
   }
 
   /**
@@ -39,9 +42,10 @@ export class SpeciesGraph {
     compB.edges.set(label, comp1);
 
     // Invalidate caches
-    this._canonical = undefined;
     this._stringExact = undefined;
-    this._stringID = undefined;
+    this.adjacencyBitset = undefined;
+    this._componentOffsets = undefined;
+    this._componentCount = undefined;
   }
 
   /**
@@ -49,14 +53,27 @@ export class SpeciesGraph {
    */
   private getNextBondLabel(): number {
     let maxLabel = 0;
+    const used = new Set<number>();
+
     for (const mol of this.molecules) {
       for (const comp of mol.components) {
         for (const label of comp.edges.keys()) {
-          if (label > maxLabel) maxLabel = label;
+          if (typeof label === 'number' && Number.isInteger(label)) {
+            used.add(label);
+            if (label > maxLabel) {
+              maxLabel = label;
+            }
+          }
         }
       }
     }
-    return maxLabel + 1;
+
+    let candidate = maxLabel + 1;
+    while (used.has(candidate)) {
+      candidate += 1;
+    }
+
+    return candidate;
   }
 
   /**
@@ -68,8 +85,148 @@ export class SpeciesGraph {
     if (partner) {
       this.adjacency.delete(key);
       this.adjacency.delete(partner);
-      this._canonical = undefined;
+      this.adjacencyBitset = undefined;
+      this._componentOffsets = undefined;
+      this._componentCount = undefined;
     }
+  }
+
+  /**
+   * VF2++ optimization: build a compact bitset encoding bonds for O(1) lookups.
+   */
+  buildAdjacencyBitset(): void {
+    if (
+      this.adjacencyBitset &&
+      this._componentOffsets &&
+      typeof this._componentCount === 'number'
+    ) {
+      return;
+    }
+
+    const offsets: number[] = [];
+    let runningIndex = 0;
+
+    for (const mol of this.molecules) {
+      offsets.push(runningIndex);
+      runningIndex += mol.components.length;
+    }
+
+    const totalComponents = runningIndex;
+    this._componentOffsets = offsets;
+    this._componentCount = totalComponents;
+
+    if (totalComponents === 0) {
+      this.adjacencyBitset = new Uint32Array(0);
+      return;
+    }
+
+    const bitsetSize = Math.ceil((totalComponents * totalComponents) / 32);
+    this.adjacencyBitset = new Uint32Array(bitsetSize);
+
+    const getIndex = (molIdx: number, compIdx: number): number => {
+      return offsets[molIdx] + compIdx;
+    };
+
+    for (const [key, partnerKey] of this.adjacency.entries()) {
+      const [molAStr, compAStr] = key.split('.');
+      const [molBStr, compBStr] = partnerKey.split('.');
+      const molA = Number(molAStr);
+      const compA = Number(compAStr);
+      const molB = Number(molBStr);
+      const compB = Number(compBStr);
+
+      if (
+        Number.isNaN(molA) ||
+        Number.isNaN(compA) ||
+        Number.isNaN(molB) ||
+        Number.isNaN(compB)
+      ) {
+        continue;
+      }
+
+      const idxA = getIndex(molA, compA);
+      const idxB = getIndex(molB, compB);
+      const bitIndex = idxA * totalComponents + idxB;
+      const arrayIndex = Math.floor(bitIndex / 32);
+      const bitPosition = bitIndex % 32;
+      const mask = (1 << bitPosition) >>> 0;
+      this.adjacencyBitset[arrayIndex] |= mask;
+    }
+  }
+
+  hasBondFast(molA: number, compA: number, molB: number, compB: number): boolean {
+    if (!this.adjacencyBitset || !this._componentOffsets || !this._componentCount) {
+      this.buildAdjacencyBitset();
+      if (!this.adjacencyBitset || !this._componentOffsets || !this._componentCount) {
+        const keyA = `${molA}.${compA}`;
+        const keyB = `${molB}.${compB}`;
+        return this.adjacency.get(keyA) === keyB;
+      }
+    }
+
+    const total = this._componentCount;
+    if (!total) {
+      const keyA = `${molA}.${compA}`;
+      const keyB = `${molB}.${compB}`;
+      return this.adjacency.get(keyA) === keyB;
+    }
+
+    const idxA = this._componentOffsets[molA] + compA;
+    const idxB = this._componentOffsets[molB] + compB;
+    const bitIndex = idxA * total + idxB;
+    const arrayIndex = Math.floor(bitIndex / 32);
+    const bitPosition = bitIndex % 32;
+    const mask = (1 << bitPosition) >>> 0;
+
+    if (arrayIndex >= this.adjacencyBitset.length) {
+      return false;
+    }
+
+    return (this.adjacencyBitset[arrayIndex] & mask) !== 0;
+  }
+
+  componentHasAnyBond(molIdx: number, compIdx: number): boolean {
+    if (!this.adjacencyBitset || !this._componentOffsets || !this._componentCount) {
+      this.buildAdjacencyBitset();
+      if (!this.adjacencyBitset || !this._componentOffsets || !this._componentCount) {
+        const key = `${molIdx}.${compIdx}`;
+        return this.adjacency.has(key);
+      }
+    }
+
+    const total = this._componentCount;
+    if (!total) {
+      const key = `${molIdx}.${compIdx}`;
+      return this.adjacency.has(key);
+    }
+
+    const rowIndex = this._componentOffsets[molIdx] + compIdx;
+    const startBit = rowIndex * total;
+    let remaining = total;
+    let bitIndex = startBit;
+
+    while (remaining > 0) {
+      const arrayIndex = Math.floor(bitIndex / 32);
+      const bitOffset = bitIndex % 32;
+      const chunkSize = Math.min(32 - bitOffset, remaining);
+
+      if (chunkSize === 32 && bitOffset === 0) {
+        if (this.adjacencyBitset[arrayIndex] !== 0) {
+          return true;
+        }
+      } else {
+        const chunk = this.adjacencyBitset[arrayIndex] >>> bitOffset;
+        const mask = chunkSize >= 32 ? 0xffffffff : ((1 << chunkSize) - 1);
+        if ((chunk & mask) !== 0) {
+          return true;
+        }
+      }
+
+      remaining -= chunkSize;
+      bitIndex += chunkSize;
+    }
+
+    return false;
   }
 
   /**
@@ -87,7 +244,7 @@ export class SpeciesGraph {
    * Find all isomorphisms from pattern to this graph
    * Returns array of Map<patternMolIdx, thisMolIdx>
    */
-  findMaps(pattern: SpeciesGraph): Map<number, number>[] {
+  findMaps(_pattern: SpeciesGraph): Map<number, number>[] {
     // This is the core isomorphism algorithm - implement VF2 or Ullmann
     // See Phase 2 below for full implementation
     return [];
@@ -100,6 +257,15 @@ export class SpeciesGraph {
     const sg = new SpeciesGraph(this.molecules.map(m => m.clone()));
     sg.adjacency = new Map(this.adjacency);
     sg.compartment = this.compartment;
+    if (this.adjacencyBitset) {
+      sg.adjacencyBitset = this.adjacencyBitset.slice();
+    }
+    if (this._componentOffsets) {
+      sg._componentOffsets = [...this._componentOffsets];
+    }
+    if (typeof this._componentCount === 'number') {
+      sg._componentCount = this._componentCount;
+    }
     return sg;
   }
 }

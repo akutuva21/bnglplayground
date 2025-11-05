@@ -1,11 +1,13 @@
 // @ts-nocheck
 import React, { useRef, useEffect } from 'react';
+import { EditorMarker } from '../types';
 
 interface MonacoEditorProps {
   value: string;
   onChange: (value: string) => void;
   language?: string;
   theme?: 'light' | 'dark';
+  markers?: EditorMarker[];
 }
 
 declare const window: any;
@@ -43,16 +45,22 @@ export const MonacoEditor: React.FC<MonacoEditorProps> = ({
   value, 
   onChange, 
   language = 'bngl', 
-  theme = 'light' 
+  theme = 'light',
+  markers = [],
 }) => {
   const editorRef = useRef<HTMLDivElement>(null);
   const monacoRef = useRef<any>(null);
   const editorInstanceRef = useRef<any>(null);
   const onChangeRef = useRef(onChange);
+  const markersRef = useRef<EditorMarker[]>(markers);
 
   useEffect(() => {
     onChangeRef.current = onChange;
   }, [onChange]);
+
+  useEffect(() => {
+    markersRef.current = markers;
+  }, [markers]);
 
   // Effect 1: Create editor on mount and dispose on unmount
   useEffect(() => {
@@ -162,6 +170,33 @@ export const MonacoEditor: React.FC<MonacoEditorProps> = ({
       }
     }
   }, [value]);
+
+  // Effect 3: Apply validation markers when provided
+  useEffect(() => {
+    const monaco = monacoRef.current;
+    const editor = editorInstanceRef.current;
+    if (!monaco || !editor) return;
+
+    const model = editor.getModel();
+    if (!model) return;
+
+    const severityMap: Record<string, number> = {
+      error: monaco.MarkerSeverity.Error,
+      warning: monaco.MarkerSeverity.Warning,
+      info: monaco.MarkerSeverity.Info,
+    };
+
+    const markerData = (markersRef.current ?? []).map((marker) => ({
+      startLineNumber: marker.startLineNumber,
+      endLineNumber: marker.endLineNumber,
+      startColumn: marker.startColumn ?? 1,
+      endColumn: marker.endColumn ?? 1,
+      message: marker.message,
+      severity: severityMap[marker.severity] ?? monaco.MarkerSeverity.Info,
+    }));
+
+    monaco.editor.setModelMarkers(model, 'bngl-validation', markerData);
+  }, [markers]);
 
   return <div ref={editorRef} className="w-full h-full border border-stone-300 dark:border-slate-700 rounded-md" />;
 };

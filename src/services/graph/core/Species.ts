@@ -1,5 +1,6 @@
 // graph/core/Species.ts
 import { SpeciesGraph } from './SpeciesGraph';
+import { GraphCanonicalizer } from './Canonical';
 
 export class Species {
   graph: SpeciesGraph;
@@ -23,7 +24,6 @@ export class Species {
    * Get canonical string for species identification
    */
   get canonicalString(): string {
-    // TODO: Implement canonicalization
-    return this.toString();
+    return GraphCanonicalizer.canonicalize(this.graph);
   }
 }

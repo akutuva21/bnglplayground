@@ -34,7 +34,40 @@ export const FIMTab: React.FC<FIMTabProps> = ({ model }) => {
   const [showFIMHeatmap, setShowFIMHeatmap] = useState(false);
   const [showCorrelationHeatmap, setShowCorrelationHeatmap] = useState(false);
   const [showJacobianHeatmap, setShowJacobianHeatmap] = useState(false);
+  const [analysisConfig, setAnalysisConfig] = useState<{ method: 'ode' | 'ssa'; t_end: number; n_steps: number }>(() => ({
+    method: 'ode',
+    t_end: 100,
+    n_steps: 100,
+  }));
   const cachedModelIdRef = React.useRef<number | null>(null);
+
+  const paramRuleMap = useMemo(() => {
+    if (!model) {
+      return {} as Record<string, string[]>;
+    }
+
+    const mapping: Record<string, string[]> = {};
+
+    model.reactionRules.forEach((rule, index) => {
+      const label = rule.name ?? `Rule ${index + 1}`;
+      const register = (paramName?: string) => {
+        if (!paramName) return;
+        if (!mapping[paramName]) {
+          mapping[paramName] = [];
+        }
+        if (!mapping[paramName].includes(label)) {
+          mapping[paramName].push(label);
+        }
+      };
+
+      register(rule.rate);
+      register(rule.reverseRate);
+    });
+
+    Object.values(mapping).forEach((rules) => rules.sort());
+
+    return mapping;
+  }, [model]);
 
   // Release cached model in worker when this tab unmounts.
   React.useEffect(() => {
@@ -68,7 +101,7 @@ export const FIMTab: React.FC<FIMTabProps> = ({ model }) => {
     setSelected(opts);
   };
 
-  const handleCompute = useCallback(async () => {
+  const handleCompute = useCallback(async (overrideConfig?: { method?: 'ode' | 'ssa'; t_end: number; n_steps: number }) => {
     if (!model) {
       setError('No model loaded');
       return;
@@ -89,11 +122,20 @@ export const FIMTab: React.FC<FIMTabProps> = ({ model }) => {
     const c = new AbortController();
     setController(c);
 
+    const config = overrideConfig
+      ? {
+          method: overrideConfig.method ?? analysisConfig.method,
+          t_end: overrideConfig.t_end,
+          n_steps: overrideConfig.n_steps,
+        }
+      : analysisConfig;
+    setAnalysisConfig(config);
+
     try {
       const simOptions = {
-        method: 'ode' as const,
-        t_end: 100,
-        n_steps: 100,
+        method: config.method,
+        t_end: config.t_end,
+        n_steps: config.n_steps,
       } as const;
 
       const onProgress = (cur: number, tot: number) => setProgress({ current: cur, total: tot });
@@ -113,11 +155,56 @@ export const FIMTab: React.FC<FIMTabProps> = ({ model }) => {
       setIsComputing(false);
       setController(null);
     }
-  }, [model, selected, useLogParams]);
+  }, [analysisConfig, model, selected, useLogParams]);
 
   const handleCancel = useCallback(() => {
     if (controller) controller.abort();
   }, [controller]);
+
+  const runPreset = useCallback((preset: 'quick' | 'standard') => {
+    const config = preset === 'quick'
+      ? { method: 'ode' as const, t_end: 60, n_steps: 80 }
+      : { method: 'ode' as const, t_end: 200, n_steps: 150 };
+    void handleCompute(config);
+  }, [handleCompute]);
+
+  const activePreset = useMemo<'quick' | 'standard' | 'custom'>(() => {
+    if (analysisConfig.method === 'ode' && analysisConfig.t_end === 60 && analysisConfig.n_steps === 80) {
+      return 'quick';
+    }
+    if (analysisConfig.method === 'ode' && analysisConfig.t_end === 200 && analysisConfig.n_steps === 150) {
+      return 'standard';
+    }
+    return 'custom';
+  }, [analysisConfig]);
+
+  const selectionSummary = useMemo(() => {
+    const coverage = new Set<string>();
+    const uncovered: string[] = [];
+    const exampleRules: string[] = [];
+
+    selected.forEach((param) => {
+      const rules = paramRuleMap[param] ?? [];
+      if (rules.length === 0) {
+        uncovered.push(param);
+        return;
+      }
+      rules.forEach((rule) => coverage.add(rule));
+      if (exampleRules.length < 4) {
+        exampleRules.push(rules[0] ?? '');
+      }
+    });
+
+    const uniqueExamples = Array.from(new Set(exampleRules.filter(Boolean)));
+
+    return {
+      selectedCount: selected.length,
+      totalParameters: parameterNames.length,
+      coveredRules: coverage.size,
+      uncovered,
+      exampleRules: uniqueExamples,
+    };
+  }, [parameterNames, paramRuleMap, selected]);
 
   const exportNullSpace = () => {
     if (!result?.nullspaceCombinations) return;
@@ -193,6 +280,51 @@ export const FIMTab: React.FC<FIMTabProps> = ({ model }) => {
 
   return (
     <div className="space-y-6">
+      <div className="rounded-xl border border-indigo-400/60 bg-gradient-to-r from-slate-900 via-indigo-900 to-slate-800 text-indigo-50 shadow-lg">
+        <div className="flex flex-col gap-6 p-6 md:flex-row md:items-center md:justify-between">
+          <div className="space-y-3 max-w-2xl">
+            <h2 className="text-xl font-semibold">Guided Identifiability Assistant</h2>
+            <p className="text-sm text-indigo-100/90">
+              Start with a preset to size the analysis, then refine manually. We keep track of the current configuration
+              and summarize how your parameter choices map onto reaction rules.
+            </p>
+            <div className="grid gap-3 text-sm sm:grid-cols-2">
+              <div className="rounded-lg border border-indigo-500/40 bg-indigo-900/40 p-3">
+                <div className="text-xs uppercase tracking-wide text-indigo-200/80">Parameters Selected</div>
+                <div className="text-lg font-semibold">{selectionSummary.selectedCount} / {selectionSummary.totalParameters}</div>
+              </div>
+              <div className="rounded-lg border border-indigo-500/40 bg-indigo-900/40 p-3">
+                <div className="text-xs uppercase tracking-wide text-indigo-200/80">Rules Touched</div>
+                <div className="text-lg font-semibold">{selectionSummary.coveredRules}</div>
+                {selectionSummary.exampleRules.length > 0 && (
+                  <div className="mt-1 text-xs text-indigo-200/80">
+                    e.g. {selectionSummary.exampleRules.join(', ')}
+                  </div>
+                )}
+              </div>
+            </div>
+            {selectionSummary.uncovered.length > 0 && (
+              <div className="rounded-lg border border-rose-400/50 bg-rose-900/40 p-3 text-xs text-rose-100">
+                {selectionSummary.uncovered.length} parameter{selectionSummary.uncovered.length === 1 ? '' : 's'}
+                {' '}lack a direct rule mapping: {selectionSummary.uncovered.slice(0, 5).join(', ')}
+                {selectionSummary.uncovered.length > 5 && ' …'}
+              </div>
+            )}
+          </div>
+          <div className="flex w-full max-w-xs flex-col gap-2">
+            <Button onClick={() => runPreset('quick')} disabled={isComputing} className="w-full">
+              ⚡ Quick Check (~60 sims)
+            </Button>
+            <Button onClick={() => runPreset('standard')} disabled={isComputing} variant="secondary" className="w-full">
+              🎯 Standard Analysis (~300 sims)
+            </Button>
+            <div className="rounded-lg border border-indigo-500/30 bg-indigo-900/30 p-3 text-xs text-indigo-200/80">
+              Active preset: {activePreset === 'quick' ? 'Quick Check' : activePreset === 'standard' ? 'Standard Analysis' : 'Custom'}<br />
+              Method: {analysisConfig.method.toUpperCase()} | t_end = {analysisConfig.t_end} | steps = {analysisConfig.n_steps}
+            </div>
+          </div>
+        </div>
+      </div>
       <Card>
         <div className="grid gap-4 md:grid-cols-2">
           <div>

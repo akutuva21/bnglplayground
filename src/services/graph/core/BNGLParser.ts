@@ -182,7 +182,7 @@ export class BNGLParser {
     // For now, assume no transformations (deleteBonds, addBonds, etc.)
     // TODO: Parse transformations from rule string
 
-    return new RxnRule(name || '', reactants, products, rateConstant);
+  return new RxnRule(name || '', reactants, products, rateConstant);
   }
 
   /**

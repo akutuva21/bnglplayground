@@ -274,8 +274,13 @@ export function parseBNGL(code: string, options: ParseBNGLOptions = {}): BNGLMod
     statements.forEach((statement) => {
       maybeCancel();
       let ruleLine = statement;
+      let ruleName: string | undefined;
       const labelMatch = ruleLine.match(/^[^:]+:\s*(.*)$/);
       if (labelMatch) {
+        const labelSegment = statement.split(':')[0]?.trim();
+        if (labelSegment) {
+          ruleName = labelSegment;
+        }
         ruleLine = labelMatch[1];
       }
 
@@ -322,6 +327,7 @@ export function parseBNGL(code: string, options: ParseBNGLOptions = {}): BNGLMod
       }
 
       model.reactionRules.push({
+        name: ruleName,
         reactants,
         products,
         rate: forwardRateLabel,

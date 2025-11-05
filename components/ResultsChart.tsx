@@ -9,6 +9,7 @@ interface ResultsChartProps {
   model: BNGLModel | null;
   visibleSpecies: Set<string>;
   onVisibleSpeciesChange: (species: Set<string>) => void;
+  highlightedSeries?: string[];
 }
 
 type ZoomDomain = {
@@ -37,7 +38,7 @@ const CustomLegend = (props: any) => {
   );
 };
 
-export const ResultsChart: React.FC<ResultsChartProps> = ({ results, model, visibleSpecies, onVisibleSpeciesChange }) => {
+export const ResultsChart: React.FC<ResultsChartProps> = ({ results, model, visibleSpecies, onVisibleSpeciesChange, highlightedSeries = [] }) => {
   const [zoomHistory, setZoomHistory] = useState<ZoomDomain[]>([]);
   const [selection, setSelection] = useState<ZoomDomain | null>(null);
 
@@ -104,6 +105,7 @@ export const ResultsChart: React.FC<ResultsChartProps> = ({ results, model, visi
 
   const speciesToPlot = results.headers.filter(h => h !== 'time');
   const currentDomain = zoomHistory.length > 0 ? zoomHistory[zoomHistory.length - 1] : undefined;
+  const highlightSet = new Set(highlightedSeries);
 
   return (
     <Card className="max-w-full overflow-hidden">
@@ -144,9 +146,10 @@ export const ResultsChart: React.FC<ResultsChartProps> = ({ results, model, visi
               type="monotone"
               dataKey={speciesName}
               stroke={CHART_COLORS[i % CHART_COLORS.length]}
-              strokeWidth={2}
+              strokeWidth={highlightSet.has(speciesName) ? 3 : 1.5}
               dot={false}
               hide={!visibleSpecies.has(speciesName)}
+              strokeOpacity={highlightSet.size === 0 || highlightSet.has(speciesName) ? 1 : 0.35}
             />
           ))}
           {selection && (

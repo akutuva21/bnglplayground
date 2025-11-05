@@ -7,6 +7,7 @@ export class RxnRule {
   reactants: SpeciesGraph[];
   products: SpeciesGraph[];
   rateConstant: number;
+  allowsIntramolecular: boolean;
 
   // Transformation operations
   deleteBonds: Array<[number, number, number, number]>; // [mol1, comp1, mol2, comp2]
@@ -19,12 +20,14 @@ export class RxnRule {
     name: string,
     reactants: SpeciesGraph[],
     products: SpeciesGraph[],
-    rateConstant: number
+    rateConstant: number,
+    options: { allowsIntramolecular?: boolean } = {}
   ) {
     this.name = name;
     this.reactants = reactants;
     this.products = products;
     this.rateConstant = rateConstant;
+    this.allowsIntramolecular = options.allowsIntramolecular ?? false;
     this.deleteBonds = [];
     this.addBonds = [];
     this.changeStates = [];

@@ -3,6 +3,25 @@ export interface Status {
   message: string;
 }
 
+export type ValidationSeverity = 'error' | 'warning' | 'info';
+
+export interface ValidationWarning {
+  severity: ValidationSeverity;
+  message: string;
+  suggestion?: string;
+  relatedElement?: string;
+  sourceHint?: string;
+}
+
+export interface EditorMarker {
+  severity: ValidationSeverity;
+  message: string;
+  startLineNumber: number;
+  endLineNumber: number;
+  startColumn?: number;
+  endColumn?: number;
+}
+
 export interface Example {
   id: string;
   name: string;
@@ -35,6 +54,7 @@ export interface BNGLReaction {
 }
 
 export interface ReactionRule {
+  name?: string;
   reactants: string[];
   products: string[];
   rate: string;

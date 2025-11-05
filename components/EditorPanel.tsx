@@ -6,7 +6,7 @@ import { UploadIcon } from './icons/UploadIcon';
 import { ExampleGalleryModal } from './ExampleGalleryModal';
 import { RadioGroup } from './ui/RadioGroup';
 import MonacoEditor from './MonacoEditor';
-import { SimulationOptions } from '../types';
+import { SimulationOptions, ValidationWarning, EditorMarker } from '../types';
 
 interface EditorPanelProps {
   code: string;
@@ -16,6 +16,8 @@ interface EditorPanelProps {
   onCancelSimulation: () => void;
   isSimulating: boolean;
   modelExists: boolean;
+  validationWarnings: ValidationWarning[];
+  editorMarkers: EditorMarker[];
 }
 
 type ParsedSimulateOptions = {
@@ -87,6 +89,8 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
   onCancelSimulation,
   isSimulating,
   modelExists,
+  validationWarnings,
+  editorMarkers,
 }) => {
   const [isGalleryOpen, setIsGalleryOpen] = useState(false);
   const [simulationMethod, setSimulationMethod] = useState<'ode' | 'ssa'>('ode');
@@ -116,6 +120,7 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
           language="bngl"
           value={code}
           onChange={(value) => onCodeChange(value || '')}
+          markers={editorMarkers}
         />
       </div>
       <div className="mt-4 flex flex-wrap items-center justify-between gap-2 shrink-0">
@@ -171,6 +176,39 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
             </div>
         </div>
       </div>
+      {validationWarnings.length > 0 && (
+        <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm dark:border-slate-700 dark:bg-slate-800/50">
+          <h3 className="mb-2 text-sm font-semibold text-slate-700 dark:text-slate-200">Model validation</h3>
+          <ul className="space-y-2">
+            {validationWarnings.map((warning, index) => {
+              const badgeClass = warning.severity === 'error'
+                ? 'bg-red-500'
+                : warning.severity === 'warning'
+                  ? 'bg-amber-500'
+                  : 'bg-blue-500';
+              const badgeLabel = warning.severity === 'error' ? 'Error' : warning.severity === 'warning' ? 'Warning' : 'Info';
+              return (
+                <li key={`${warning.message}-${index}`} className="rounded border border-slate-200 bg-white p-3 text-slate-700 shadow-sm dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
+                  <div className="flex items-start gap-2">
+                    <span className={`mt-0.5 inline-flex h-5 shrink-0 items-center rounded-full px-2 text-xs font-semibold text-white ${badgeClass}`}>
+                      {badgeLabel}
+                    </span>
+                    <div className="flex-1">
+                      <p className="font-medium">{warning.message}</p>
+                      {warning.relatedElement && (
+                        <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Related: {warning.relatedElement}</p>
+                      )}
+                      {warning.suggestion && (
+                        <pre className="mt-2 whitespace-pre-wrap rounded bg-slate-100 p-2 text-xs text-slate-700 dark:bg-slate-800 dark:text-slate-200">{warning.suggestion}</pre>
+                      )}
+                    </div>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
        <ExampleGalleryModal
         isOpen={isGalleryOpen}
         onClose={() => setIsGalleryOpen(false)}

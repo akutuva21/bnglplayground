@@ -5,9 +5,10 @@ import { Header } from './components/Header';
 import { StatusMessage } from './components/ui/StatusMessage';
 import { AboutModal } from './components/AboutModal';
 import { bnglService } from './services/bnglService';
-import { BNGLModel, SimulationOptions, SimulationResults, Status } from './types';
+import { BNGLModel, SimulationOptions, SimulationResults, Status, ValidationWarning, EditorMarker } from './types';
 import { INITIAL_BNGL_CODE } from './constants';
 import SimulationModal from './components/SimulationModal';
+import { validateBNGLModel, validationWarningsToMarkers } from './services/modelValidation';
 
 function App() {
   const [code, setCode] = useState<string>(INITIAL_BNGL_CODE);
@@ -18,6 +19,8 @@ function App() {
   const [isSimulating, setIsSimulating] = useState(false);
   const [generationProgress, setGenerationProgress] = useState<string>('');
   const [isAboutModalOpen, setIsAboutModalOpen] = useState(false);
+  const [validationWarnings, setValidationWarnings] = useState<ValidationWarning[]>([]);
+  const [editorMarkers, setEditorMarkers] = useState<EditorMarker[]>([]);
 
   const parseAbortRef = useRef<AbortController | null>(null);
   const simulateAbortRef = useRef<AbortController | null>(null);
@@ -48,12 +51,18 @@ function App() {
         description: 'Parse BNGL model',
       });
       setModel(parsedModel);
-      setStatus({ type: 'success', message: 'Model parsed successfully!' });
+      const warnings = validateBNGLModel(parsedModel);
+      setValidationWarnings(warnings);
+      setEditorMarkers(validationWarningsToMarkers(code, warnings));
+      const hasErrors = warnings.some((warning) => warning.severity === 'error');
+      setStatus({ type: hasErrors ? 'warning' : 'success', message: hasErrors ? 'Model parsed with validation issues. Review the warnings panel.' : 'Model parsed successfully!' });
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') {
         return;
       }
       setModel(null);
+      setValidationWarnings([]);
+      setEditorMarkers([]);
       const message = error instanceof Error ? error.message : 'An unknown error occurred.';
       setStatus({ type: 'error', message: `Parsing failed: ${message}` });
     } finally {
@@ -154,6 +163,8 @@ function App() {
     setCode(newCode);
     setModel(null);
     setResults(null);
+    setValidationWarnings([]);
+    setEditorMarkers([]);
   };
 
   const handleStatusClose = () => {
@@ -180,6 +191,8 @@ function App() {
                 onCancelSimulation={handleCancelSimulation}
                 isSimulating={isSimulating}
                 modelExists={!!model}
+                validationWarnings={validationWarnings}
+                editorMarkers={editorMarkers}
               />
             </div>
             <div className="flex min-h-0 min-w-0 flex-col overflow-hidden">

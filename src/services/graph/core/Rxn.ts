@@ -5,12 +5,22 @@ export class Rxn {
   products: number[];   // species indices
   rate: number;
   name?: string;
+  degeneracy: number;
+  propensityFactor?: number;
 
-  constructor(reactants: number[], products: number[], rate: number, name?: string) {
+  constructor(
+    reactants: number[],
+    products: number[],
+    rate: number,
+    name?: string,
+    options: { degeneracy?: number; propensityFactor?: number } = {}
+  ) {
     this.reactants = reactants;
     this.products = products;
     this.rate = rate;
     this.name = name;
+    this.degeneracy = options.degeneracy ?? 1;
+    this.propensityFactor = options.propensityFactor;
   }
 
   /**

@@ -5,6 +5,7 @@ import { RxnRule } from './core/RxnRule';
 import { Rxn } from './core/Rxn';
 import { GraphCanonicalizer } from './core/Canonical';
 import { GraphMatcher, MatchMap } from './core/Matcher';
+import { countEmbeddingDegeneracy } from './core/degeneracy';
 import { Molecule } from './core/Molecule';
 import { Component } from './core/Component';
 
@@ -229,12 +230,19 @@ export class NetworkGenerator {
     signal?: AbortSignal
   ): Promise<void> {
     const pattern = rule.reactants[0];
+
+    if (!reactantSpecies.graph.adjacencyBitset) {
+      reactantSpecies.graph.buildAdjacencyBitset();
+    }
+
     const matches = GraphMatcher.findAllMaps(pattern, reactantSpecies.graph);
 
     for (const match of matches) {
       if (signal?.aborted) {
         throw new DOMException('Network generation cancelled', 'AbortError');
       }
+
+      const degeneracy = countEmbeddingDegeneracy(pattern, reactantSpecies.graph, match);
 
       // Apply transformation
       const products = this.applyRuleTransformation(
@@ -253,11 +261,13 @@ export class NetworkGenerator {
       }
 
       // Create reaction
+      const effectiveRate = rule.rateConstant / Math.max(degeneracy, 1);
       const rxn = new Rxn(
         [reactantSpecies.index],
         productSpeciesIndices,
-        rule.rateConstant,
-        rule.name
+        effectiveRate,
+        rule.name,
+        { degeneracy }
       );
 
       if (!this.isDuplicateReaction(rxn, reactionsList)) {
@@ -289,6 +299,37 @@ export class NetworkGenerator {
     const pattern1 = rule.reactants[0];
     const pattern2 = rule.reactants[1];
 
+    if (!reactant1Species.graph.adjacencyBitset) {
+      reactant1Species.graph.buildAdjacencyBitset();
+    }
+
+    const allowIntramolecular = rule.allowsIntramolecular ?? false;
+
+    const shareTargets = (a: MatchMap, b: MatchMap): boolean => {
+      const mappedA = new Set(a.moleculeMap.values());
+      for (const mol of b.moleculeMap.values()) {
+        if (mappedA.has(mol)) {
+          return true;
+        }
+      }
+      return false;
+    };
+
+    const getDegeneracy = (
+      cache: WeakMap<MatchMap, number>,
+      match: MatchMap,
+      patternGraph: SpeciesGraph,
+      speciesGraph: SpeciesGraph
+    ): number => {
+      const cached = cache.get(match);
+      if (cached !== undefined) {
+        return cached;
+      }
+      const computed = countEmbeddingDegeneracy(patternGraph, speciesGraph, match);
+      cache.set(match, computed);
+      return computed;
+    };
+
     for (const firstIdx of [0, 1]) {
       const firstPattern = firstIdx === 0 ? pattern1 : pattern2;
       const secondIdx = firstIdx === 0 ? 1 : 0;
@@ -298,16 +339,22 @@ export class NetworkGenerator {
       if (matchesFirst.length === 0) {
         continue;
       }
+      const firstDegeneracyCache = new WeakMap<MatchMap, number>();
 
       for (const reactant2Species of allSpecies) {
         if (signal?.aborted) {
           throw new DOMException('Network generation cancelled', 'AbortError');
         }
 
+        if (!reactant2Species.graph.adjacencyBitset) {
+          reactant2Species.graph.buildAdjacencyBitset();
+        }
+
         const matchesSecond = GraphMatcher.findAllMaps(secondPattern, reactant2Species.graph);
         if (matchesSecond.length === 0) {
           continue;
         }
+        const secondDegeneracyCache = new WeakMap<MatchMap, number>();
 
         const keyA = Math.min(reactant1Species.index, reactant2Species.index);
         const keyB = Math.max(reactant1Species.index, reactant2Species.index);
@@ -316,59 +363,88 @@ export class NetworkGenerator {
           continue;
         }
 
-        const matchFirst = matchesFirst[0];
-        const matchSecond = matchesSecond[0];
+        const identicalSpecies = reactant1Species.index === reactant2Species.index;
 
-        if (reactant1Species === reactant2Species) {
-          const mappedA = new Set(matchFirst.moleculeMap.values());
-          const mappedB = new Set(matchSecond.moleculeMap.values());
-          const overlap = [...mappedA].filter(mol => mappedB.has(mol));
-          if (overlap.length > 0) {
-            if (shouldLogNetworkGenerator) {
-              debugNetworkLog(
-                `[applyBimolecularRule] Self-dimerization detected: matches overlap on molecules ${overlap}`
-              );
+        let producedReaction = false;
+
+        for (const matchFirst of matchesFirst) {
+          const firstDegeneracy = getDegeneracy(
+            firstDegeneracyCache,
+            matchFirst,
+            firstPattern,
+            reactant1Species.graph
+          );
+
+          for (const matchSecond of matchesSecond) {
+            if (
+              !allowIntramolecular &&
+              reactant1Species === reactant2Species &&
+              shareTargets(matchFirst, matchSecond)
+            ) {
+              if (shouldLogNetworkGenerator) {
+                debugNetworkLog(
+                  '[applyBimolecularRule] Skipping intramolecular mapping (rule forbids it)'
+                );
+              }
+              continue;
             }
-            continue;
+
+            const secondDegeneracy = getDegeneracy(
+              secondDegeneracyCache,
+              matchSecond,
+              secondPattern,
+              reactant2Species.graph
+            );
+
+            const reactantPatternsOrdered = [firstPattern, secondPattern];
+            const reactantGraphsOrdered = [reactant1Species.graph, reactant2Species.graph];
+            const matchesOrdered = [matchFirst, matchSecond];
+
+            const products = this.applyRuleTransformation(
+              rule,
+              reactantPatternsOrdered,
+              reactantGraphsOrdered,
+              matchesOrdered
+            );
+            if (!products || !this.validateProducts(products)) {
+              continue;
+            }
+
+            const productSpeciesIndices: number[] = [];
+            for (const product of products) {
+              const productSpecies = this.addOrGetSpecies(product, speciesMap, speciesList, queue, signal);
+              productSpeciesIndices.push(productSpecies.index);
+            }
+
+            const totalDegeneracy = Math.max(firstDegeneracy * secondDegeneracy, 1);
+            const effectiveRate = rule.rateConstant / totalDegeneracy;
+            const propensityFactor = identicalSpecies ? 0.5 : 1;
+
+            const reactantIndices = [reactant1Species.index, reactant2Species.index];
+            const rxn = new Rxn(
+              reactantIndices,
+              productSpeciesIndices,
+              effectiveRate,
+              rule.name,
+              {
+                degeneracy: totalDegeneracy,
+                propensityFactor
+              }
+            );
+
+            if (!this.isDuplicateReaction(rxn, reactionsList)) {
+              reactionsList.push(rxn);
+              producedReaction = true;
+            }
+
+            if (signal?.aborted) {
+              throw new DOMException('Network generation cancelled', 'AbortError');
+            }
           }
         }
 
-        const reactantPatternsOrdered = [firstPattern, secondPattern];
-        const reactantGraphsOrdered = [reactant1Species.graph, reactant2Species.graph];
-        const matchesOrdered = [matchFirst, matchSecond];
-
-        const products = this.applyRuleTransformation(
-          rule,
-          reactantPatternsOrdered,
-          reactantGraphsOrdered,
-          matchesOrdered
-        );
-        if (!products || !this.validateProducts(products)) {
-          continue;
-        }
-
-        const productSpeciesIndices: number[] = [];
-        for (const product of products) {
-          const productSpecies = this.addOrGetSpecies(product, speciesMap, speciesList, queue, signal);
-          productSpeciesIndices.push(productSpecies.index);
-        }
-
-        processedPairs.add(pairKey);
-
-        const reactantIndices = [reactant1Species.index, reactant2Species.index];
-        const rxn = new Rxn(
-          reactantIndices,
-          productSpeciesIndices,
-          rule.rateConstant,
-          rule.name
-        );
-
-        if (!this.isDuplicateReaction(rxn, reactionsList)) {
-          reactionsList.push(rxn);
-        }
-
-        if (signal?.aborted) {
-          throw new DOMException('Network generation cancelled', 'AbortError');
+        if (producedReaction) {
+          processedPairs.add(pairKey);
         }
       }
     }
@@ -584,12 +660,15 @@ export class NetworkGenerator {
       const compIdx2 = componentIndexMap.get(`${end2.pMolIdx}:${end2.pCompIdx}`);
 
       if (
-        molIdx1 === undefined ||
-        molIdx2 === undefined ||
-        compIdx1 === undefined ||
-        compIdx2 === undefined
+        typeof molIdx1 !== 'number' ||
+        typeof molIdx2 !== 'number' ||
+        typeof compIdx1 !== 'number' ||
+        typeof compIdx2 !== 'number'
       ) {
-        console.warn('[buildProductGraph] Incomplete bond mapping, skipping bond');
+        console.warn(
+          `[buildProductGraph] Incomplete bond mapping, skipping bond ${bondLabel} ` +
+            `(molIdx1=${String(molIdx1)}, molIdx2=${String(molIdx2)}, compIdx1=${String(compIdx1)}, compIdx2=${String(compIdx2)})`
+        );
         continue;
       }
 
@@ -711,6 +790,19 @@ export class NetworkGenerator {
           throw this.buildLimitError(
             `Species exceeds max stoichiometry (${this.options.maxStoich}) for molecule type "${typeName}" under rule "${this.currentRuleName ?? 'unknown'}".`
           );
+        }
+      }
+
+      for (const mol of product.molecules) {
+        for (const comp of mol.components) {
+          if (comp.wildcard === '+' && comp.edges.size === 0) {
+            console.warn('[validateProducts] Component marked !+ but no bond present; rejecting product');
+            return false;
+          }
+          if (comp.wildcard === '?' && comp.edges.size > 0) {
+            console.warn('[validateProducts] Component marked !? but bond detected; rejecting product');
+            return false;
+          }
         }
       }
     }
