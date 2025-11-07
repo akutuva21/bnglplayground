@@ -9,6 +9,8 @@ import { BNGLModel, SimulationOptions, SimulationResults, Status, ValidationWarn
 import { INITIAL_BNGL_CODE } from './constants';
 import SimulationModal from './components/SimulationModal';
 import { validateBNGLModel, validationWarningsToMarkers } from './services/modelValidation';
+import { TutorialModal } from './components/modals/TutorialModal';
+import { TUTORIALS, type TutorialProgressState } from './src/data/tutorials';
 
 function App() {
   const [code, setCode] = useState<string>(INITIAL_BNGL_CODE);
@@ -19,6 +21,9 @@ function App() {
   const [isSimulating, setIsSimulating] = useState(false);
   const [generationProgress, setGenerationProgress] = useState<string>('');
   const [isAboutModalOpen, setIsAboutModalOpen] = useState(false);
+  const [isTutorialModalOpen, setIsTutorialModalOpen] = useState(false);
+  const [activeTutorialId, setActiveTutorialId] = useState<string | null>(null);
+  const [tutorialProgress, setTutorialProgress] = useState<Record<string, TutorialProgressState>>({});
   const [validationWarnings, setValidationWarnings] = useState<ValidationWarning[]>([]);
   const [editorMarkers, setEditorMarkers] = useState<EditorMarker[]>([]);
 
@@ -137,6 +142,67 @@ function App() {
     }
   }, []);
 
+  const ensureTutorialEntry = useCallback((tutorialId: string, prev: Record<string, TutorialProgressState>): TutorialProgressState => {
+    return prev[tutorialId] ?? { currentStepIndex: 0, completedSteps: [] };
+  }, []);
+
+  const handleSelectTutorial = useCallback((tutorialId: string) => {
+    setActiveTutorialId(tutorialId);
+    setTutorialProgress((prev) => {
+      if (prev[tutorialId]) {
+        return prev;
+      }
+      return {
+        ...prev,
+        [tutorialId]: { currentStepIndex: 0, completedSteps: [] },
+      };
+    });
+  }, []);
+
+  const handleSetTutorialStep = useCallback((tutorialId: string, stepIndex: number) => {
+    setTutorialProgress((prev) => {
+      const entry = ensureTutorialEntry(tutorialId, prev);
+      const sanitizedIndex = Math.max(0, stepIndex);
+      return {
+        ...prev,
+        [tutorialId]: {
+          ...entry,
+          currentStepIndex: sanitizedIndex,
+        },
+      };
+    });
+  }, [ensureTutorialEntry]);
+
+  const handleCompleteTutorialStep = useCallback((tutorialId: string, stepNumber: number) => {
+    setTutorialProgress((prev) => {
+      const entry = ensureTutorialEntry(tutorialId, prev);
+      if (entry.completedSteps.includes(stepNumber)) {
+        return prev;
+      }
+      return {
+        ...prev,
+        [tutorialId]: {
+          ...entry,
+          completedSteps: [...entry.completedSteps, stepNumber],
+        },
+      };
+    });
+  }, [ensureTutorialEntry]);
+
+  const handleResetTutorial = useCallback((tutorialId: string) => {
+    setTutorialProgress((prev) => ({
+      ...prev,
+      [tutorialId]: { currentStepIndex: 0, completedSteps: [] },
+    }));
+  }, []);
+
+  useEffect(() => {
+    if (!isTutorialModalOpen) return;
+    if (!activeTutorialId && TUTORIALS.length > 0) {
+      setActiveTutorialId(TUTORIALS[0].id);
+    }
+  }, [isTutorialModalOpen, activeTutorialId]);
+
   // Subscribe to worker progress/warning notifications while simulating
   useEffect(() => {
     if (!isSimulating) return undefined;
@@ -173,7 +239,10 @@ function App() {
 
   return (
     <div className="flex min-h-screen flex-col bg-slate-50 font-sans text-slate-900 dark:bg-slate-900 dark:text-slate-100">
-      <Header onAboutClick={() => setIsAboutModalOpen(true)} />
+      <Header
+        onAboutClick={() => setIsAboutModalOpen(true)}
+        onTutorialsClick={() => setIsTutorialModalOpen(true)}
+      />
 
       <main className="flex-1 overflow-hidden">
         <div className="container mx-auto flex h-full flex-col gap-6 p-4 sm:p-6 lg:p-8">
@@ -211,6 +280,19 @@ function App() {
             isGenerating={isSimulating}
             progressMessage={generationProgress}
             onCancel={handleCancelSimulation}
+          />
+          <TutorialModal
+            isOpen={isTutorialModalOpen}
+            onClose={() => setIsTutorialModalOpen(false)}
+            activeTutorialId={activeTutorialId}
+            onSelectTutorial={handleSelectTutorial}
+            progressMap={tutorialProgress}
+            onSetStep={handleSetTutorialStep}
+            onCompleteStep={handleCompleteTutorialStep}
+            onResetTutorial={handleResetTutorial}
+            model={model}
+            onCodeChange={handleCodeChange}
+            onParse={handleParse}
           />
         </div>
       </main>

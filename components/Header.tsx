@@ -3,13 +3,13 @@ import { useTheme } from '../hooks/useTheme';
 import { MoonIcon } from './icons/MoonIcon';
 import { SunIcon } from './icons/SunIcon';
 import { Button } from './ui/Button';
-import { AboutModal } from './AboutModal';
 
 interface HeaderProps {
-    onAboutClick: () => void;
+  onAboutClick: () => void;
+  onTutorialsClick: () => void;
 }
 
-export const Header: React.FC<HeaderProps> = ({ onAboutClick }) => {
+export const Header: React.FC<HeaderProps> = ({ onAboutClick, onTutorialsClick }) => {
   const [theme, toggleTheme] = useTheme();
 
   return (
@@ -31,6 +31,7 @@ export const Header: React.FC<HeaderProps> = ({ onAboutClick }) => {
             </div>
           </div>
           <div className="flex items-center gap-4">
+            <Button onClick={onTutorialsClick} variant="ghost">Tutorials</Button>
             <Button onClick={onAboutClick} variant="ghost">About</Button>
             <button
               onClick={toggleTheme}
