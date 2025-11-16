@@ -3,8 +3,31 @@ import { Button } from './ui/Button';
 import { Card } from './ui/Card';
 import { LoadingSpinner } from './ui/LoadingSpinner';
 import { UploadIcon } from './icons/UploadIcon';
+import { XIcon } from './icons/XIcon';
 import { ExampleGalleryModal } from './ExampleGalleryModal';
 import { RadioGroup } from './ui/RadioGroup';
+
+// Minimal BNGL tidy helper (inlined to avoid module resolution issues)
+function formatBNGLMini(code: string): string {
+  if (!code) return '';
+  const normalized = code.replace(/\r\n/g, '\n');
+  const lines = normalized
+    .split('\n')
+    .map((line) => line.replace(/#.*/g, '').trimEnd());
+  const out: string[] = [];
+  let blank = false;
+  for (const ln of lines) {
+    const trimmed = ln.trim();
+    if (!trimmed) {
+      if (!blank) out.push('');
+      blank = true;
+      continue;
+    }
+    blank = false;
+    out.push(trimmed.replace(/\s+/g, ' '));
+  }
+  return out.join('\n').trim() + '\n';
+}
 import MonacoEditor from './MonacoEditor';
 import { SimulationOptions, ValidationWarning, EditorMarker } from '../types';
 
@@ -93,6 +116,9 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
   editorMarkers,
 }) => {
   const [isGalleryOpen, setIsGalleryOpen] = useState(false);
+  // removed first-time-open example gallery state
+  const [showIntroBanner, setShowIntroBanner] = useState(true);
+  // Auto-open on first visit removed so the page isn't blocked by a modal on first load.
   const [simulationMethod, setSimulationMethod] = useState<'ode' | 'ssa'>('ode');
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
@@ -113,25 +139,98 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
   };
   
   return (
-    <Card className="flex h-full flex-col overflow-hidden">
-      <h2 className="text-xl font-bold mb-3 text-slate-800 dark:text-slate-100">BNGL Model Editor</h2>
-      <div className="relative flex-1 min-h-0 overflow-hidden">
-        <MonacoEditor
-          language="bngl"
-          value={code}
-          onChange={(value) => onCodeChange(value || '')}
-          markers={editorMarkers}
-        />
+    <Card className="flex h-full min-h-0 flex-col overflow-hidden">
+      <div className="flex flex-col gap-3 flex-1 min-h-0 overflow-y-auto pr-1">
+        <h2 className="text-xl font-bold text-slate-800 dark:text-slate-100">BNGL Model Editor</h2>
+        {/* Intro banner for first-time users (dismissible) */}
+        {showIntroBanner && (
+          <div className="rounded-lg border border-slate-200 bg-white p-3 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-900/40 relative">
+            <strong>Welcome!</strong>
+            <ul className="list-disc pl-5 mt-2">
+              <li>Write or load a BNGL model in the editor.</li>
+              <li>Click <strong>Examples</strong> to load a starter model, then click <strong>Run Simulation</strong>.</li>
+              <li>Explore the Regulatory Graph and Identifiability tabs to analyze your model.</li>
+            </ul>
+            <button
+              aria-label="Dismiss intro"
+              onClick={() => setShowIntroBanner(false)}
+              className="absolute top-2 right-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+            >
+              <XIcon className="w-4 h-4" />
+            </button>
+          </div>
+        )}
+        {/* Model parse status bar */}
+        <div className="mb-2 flex items-center gap-3">
+          {validationWarnings.length === 0 && modelExists ? (
+            <div className="inline-flex items-center gap-2 rounded px-3 py-1 bg-green-50 text-green-700 text-sm">✅ Parsed OK</div>
+          ) : modelExists && validationWarnings.some(w => w.severity === 'error') ? (
+            <div className="inline-flex items-center gap-2 rounded px-3 py-1 bg-red-50 text-red-700 text-sm">❌ Parsed with errors</div>
+          ) : modelExists && validationWarnings.length > 0 ? (
+            <div className="inline-flex items-center gap-2 rounded px-3 py-1 bg-amber-50 text-amber-800 text-sm">⚠️ Parsed with warnings</div>
+          ) : (
+            <div className="inline-flex items-center gap-2 rounded px-3 py-1 bg-slate-50 text-slate-700 text-sm">📝 No model parsed</div>
+          )}
+          {validationWarnings.length > 0 && (
+            <button onClick={onParse} className="text-xs underline text-slate-600">Re-parse</button>
+          )}
+        </div>
+        <div className="relative flex-1 min-h-[16rem] overflow-hidden">
+          <MonacoEditor
+            language="bngl"
+            value={code}
+            onChange={(value) => onCodeChange(value || '')}
+            markers={editorMarkers}
+          />
+        </div>
+        {validationWarnings.length > 0 && (
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm dark:border-slate-700 dark:bg-slate-800/50">
+            <h3 className="mb-2 text-sm font-semibold text-slate-700 dark:text-slate-200">Model validation</h3>
+            <div className="max-h-48 overflow-y-auto pr-1">
+              <ul className="space-y-2">
+                {validationWarnings.map((warning, index) => {
+                  const badgeClass = warning.severity === 'error'
+                    ? 'bg-red-500'
+                    : warning.severity === 'warning'
+                      ? 'bg-amber-500'
+                      : 'bg-blue-500';
+                  const badgeLabel = warning.severity === 'error' ? 'Error' : warning.severity === 'warning' ? 'Warning' : 'Info';
+                  return (
+                    <li key={`${warning.message}-${index}`} className="rounded border border-slate-200 bg-white p-3 text-slate-700 shadow-sm dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
+                      <div className="flex items-start gap-2">
+                        <span className={`mt-0.5 inline-flex h-5 shrink-0 items-center rounded-full px-2 text-xs font-semibold text-white ${badgeClass}`}>
+                          {badgeLabel}
+                        </span>
+                        <div className="flex-1">
+                          <p className="font-medium">{warning.message}</p>
+                          {warning.relatedElement && (
+                            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Related: {warning.relatedElement}</p>
+                          )}
+                          {warning.suggestion && (
+                            <pre className="mt-2 whitespace-pre-wrap rounded bg-slate-100 p-2 text-xs text-slate-700 dark:bg-slate-800 dark:text-slate-200">{warning.suggestion}</pre>
+                          )}
+                        </div>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          </div>
+        )}
       </div>
-      <div className="mt-4 flex flex-wrap items-center justify-between gap-2 shrink-0">
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-2 shrink-0 border-t border-slate-200 pt-3 dark:border-slate-700">
          <div className="flex flex-wrap gap-2">
             <Button onClick={() => setIsGalleryOpen(true)}>
               Examples
             </Button>
-            <Button variant="subtle" onClick={() => fileInputRef.current?.click()}>
+                    <Button variant="subtle" onClick={() => fileInputRef.current?.click()}>
               <UploadIcon className="w-4 h-4 mr-2" />
               Load BNGL
             </Button>
+                    <Button variant="subtle" onClick={() => onCodeChange(formatBNGLMini(code))}>
+                      Format / Tidy BNGL
+                    </Button>
             <input
               type="file"
               ref={fileInputRef}
@@ -176,39 +275,6 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
             </div>
         </div>
       </div>
-      {validationWarnings.length > 0 && (
-        <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm dark:border-slate-700 dark:bg-slate-800/50">
-          <h3 className="mb-2 text-sm font-semibold text-slate-700 dark:text-slate-200">Model validation</h3>
-          <ul className="space-y-2">
-            {validationWarnings.map((warning, index) => {
-              const badgeClass = warning.severity === 'error'
-                ? 'bg-red-500'
-                : warning.severity === 'warning'
-                  ? 'bg-amber-500'
-                  : 'bg-blue-500';
-              const badgeLabel = warning.severity === 'error' ? 'Error' : warning.severity === 'warning' ? 'Warning' : 'Info';
-              return (
-                <li key={`${warning.message}-${index}`} className="rounded border border-slate-200 bg-white p-3 text-slate-700 shadow-sm dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
-                  <div className="flex items-start gap-2">
-                    <span className={`mt-0.5 inline-flex h-5 shrink-0 items-center rounded-full px-2 text-xs font-semibold text-white ${badgeClass}`}>
-                      {badgeLabel}
-                    </span>
-                    <div className="flex-1">
-                      <p className="font-medium">{warning.message}</p>
-                      {warning.relatedElement && (
-                        <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Related: {warning.relatedElement}</p>
-                      )}
-                      {warning.suggestion && (
-                        <pre className="mt-2 whitespace-pre-wrap rounded bg-slate-100 p-2 text-xs text-slate-700 dark:bg-slate-800 dark:text-slate-200">{warning.suggestion}</pre>
-                      )}
-                    </div>
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
-        </div>
-      )}
        <ExampleGalleryModal
         isOpen={isGalleryOpen}
         onClose={() => setIsGalleryOpen(false)}

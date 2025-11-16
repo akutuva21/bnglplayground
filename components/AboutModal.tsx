@@ -4,9 +4,10 @@ import { Modal } from './ui/Modal';
 interface AboutModalProps {
     isOpen: boolean;
     onClose: () => void;
+    focus?: string | null;
 }
 
-export const AboutModal: React.FC<AboutModalProps> = ({ isOpen, onClose }) => {
+export const AboutModal: React.FC<AboutModalProps> = ({ isOpen, onClose, focus }) => {
     return (
         <Modal isOpen={isOpen} onClose={onClose} title="About BioNetGen Playground">
             <div className="prose dark:prose-invert max-w-none">
@@ -27,6 +28,13 @@ export const AboutModal: React.FC<AboutModalProps> = ({ isOpen, onClose }) => {
                 <p>
                     This project is for educational and demonstration purposes. The BNGL parser and simulator are simplified and may not support all features of the official BioNetGen software.
                 </p>
+                                {focus === 'bngl' && (
+                                    <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-900/40">
+                                        <h4 className="font-semibold mb-2">What is BNGL?</h4>
+                                        <p className="text-sm">BNGL (BioNetGen Language) is a rule-based modeling language for biochemical systems — molecules are defined with sites and states, and rules encode interactions and transformations between them.</p>
+                                        <p className="text-sm mt-2">If you're new, load a beginner example and try Running a simulation; the RegulatorGraph and Identifiability tabs help visualize network structure and parameter sensitivity.</p>
+                                    </div>
+                                )}
             </div>
         </Modal>
     );

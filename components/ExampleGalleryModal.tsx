@@ -16,6 +16,7 @@ const allTags = [...new Set(EXAMPLES.flatMap(ex => ex.tags))];
 export const ExampleGalleryModal: React.FC<ExampleGalleryModalProps> = ({ isOpen, onClose, onSelect }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedTags, setSelectedTags] = useState<Set<string>>(new Set());
+  const [focusedExample, setFocusedExample] = useState<string | null>(null);
 
   const filteredExamples = useMemo(() => {
     return EXAMPLES.filter(example => {
@@ -28,6 +29,12 @@ export const ExampleGalleryModal: React.FC<ExampleGalleryModalProps> = ({ isOpen
       return searchMatch && tagMatch;
     });
   }, [searchTerm, selectedTags]);
+
+  React.useEffect(() => {
+    if (!isOpen) {
+      setFocusedExample(null);
+    }
+  }, [isOpen]);
   
   const handleTagClick = (tag: string) => {
       const newTags = new Set(selectedTags);
@@ -69,9 +76,16 @@ export const ExampleGalleryModal: React.FC<ExampleGalleryModalProps> = ({ isOpen
                 </button>
             ))}
         </div>
-  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 max-h-[75vh] overflow-y-auto pr-2">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 max-h-[75vh] overflow-y-auto pr-2">
           {filteredExamples.length > 0 ? filteredExamples.map(example => (
             <Card key={example.id} className="flex flex-col">
+              <div className="flex items-center justify-between">
+                {focusedExample === example.id ? (
+                  <div className="text-xs text-primary">Focused</div>
+                ) : (
+                  <div className="text-xs text-slate-500">&nbsp;</div>
+                )}
+              </div>
               <div className="flex-grow">
                 <h3 className="font-semibold text-slate-800 dark:text-slate-100">{example.name}</h3>
                 <p className="text-sm text-slate-600 dark:text-slate-300 mt-1">{example.description}</p>
@@ -81,7 +95,7 @@ export const ExampleGalleryModal: React.FC<ExampleGalleryModalProps> = ({ isOpen
                     ))}
                 </div>
               </div>
-              <button 
+                <button 
                 onClick={() => onSelect(example.code)}
                 className="mt-4 w-full text-center px-4 py-2 text-sm font-semibold bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 rounded-md transition-colors text-slate-800 dark:text-slate-100"
               >
@@ -96,3 +110,5 @@ export const ExampleGalleryModal: React.FC<ExampleGalleryModalProps> = ({ isOpen
     </Modal>
   );
 };
+
+

@@ -156,6 +156,11 @@ export const ARGraphViewer: React.FC<ARGraphViewerProps> = ({ arGraph, selectedR
         ruleNode.connectedEdges().addClass('highlighted');
         ruleNode.connectedEdges().sources().addClass('highlighted');
         ruleNode.connectedEdges().targets().addClass('highlighted');
+        try {
+          cy.animate({ center: { eles: ruleNode }, duration: 350 });
+          // gently zoom in
+          cy.zoom(cy.zoom() * 1.05);
+        } catch (e) {}
       }
     }
 
@@ -166,6 +171,10 @@ export const ARGraphViewer: React.FC<ARGraphViewerProps> = ({ arGraph, selectedR
         atomNode.connectedEdges().addClass('highlighted');
         atomNode.connectedEdges().sources().addClass('highlighted');
         atomNode.connectedEdges().targets().addClass('highlighted');
+        try {
+          cy.animate({ center: { eles: atomNode }, duration: 350 });
+          cy.zoom(cy.zoom() * 1.05);
+        } catch (e) {}
       }
     }
   }, [selectedRuleId, selectedAtomId]);
@@ -185,6 +194,13 @@ export const ARGraphViewer: React.FC<ARGraphViewerProps> = ({ arGraph, selectedR
 
   return (
     <div className="relative">
+      <div className="mb-3 flex items-center gap-3 text-xs text-slate-600">
+        <div className="inline-flex items-center gap-2"><span className="w-3 h-3 rounded-full bg-[#E15759]" /> Rule node</div>
+        <div className="inline-flex items-center gap-2"><span className="w-3 h-3 rounded-full bg-[#76B7B2]" /> Atom/state node</div>
+        <div className="inline-flex items-center gap-2"><span className="px-1 rounded bg-[#59A14F] text-white text-xs">→</span> produces</div>
+        <div className="inline-flex items-center gap-2"><span className="px-1 rounded bg-[#F28E2B] text-white text-xs">→</span> consumes</div>
+        <div className="inline-flex items-center gap-2"><span className="px-1 rounded bg-[#4E79A7] text-white text-xs">- -</span> modifies</div>
+      </div>
       <div className="absolute right-3 top-3 z-10">
         <button
           type="button"

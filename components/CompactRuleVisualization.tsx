@@ -17,6 +17,14 @@ const operationLabel: Record<RuleOperation['type'], string> = {
   remove_molecule: 'Remove',
 };
 
+const operationIcon: Record<RuleOperation['type'], string> = {
+  bind: '🔗',
+  unbind: '✂️',
+  state_change: '🌀',
+  add_molecule: '+',
+  remove_molecule: '-',
+};
+
 const describeOperation = (operation: RuleOperation): string => {
   switch (operation.type) {
     case 'bind':
@@ -106,7 +114,7 @@ export const CompactRuleVisualization: React.FC<CompactRuleVisualizationProps> =
                   key={`${operation.type}-${operation.target}-${idx}`}
                   className={`flex w-full max-w-xs flex-col gap-1 rounded-lg px-3 py-2 text-xs shadow-sm md:w-auto ${operationStyles[operation.type]}`}
                 >
-                  <span className="font-semibold uppercase tracking-wide">{operationLabel[operation.type]}</span>
+                  <span className="font-semibold uppercase tracking-wide">{operationIcon[operation.type]} {operationLabel[operation.type]}</span>
                   <span className="text-[11px] leading-4">{describeOperation(operation)}</span>
                 </div>
               ))}

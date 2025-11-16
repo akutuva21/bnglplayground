@@ -40,6 +40,10 @@ export const DebuggerTab: React.FC<DebuggerTabProps> = ({ model }) => {
 
   return (
     <div className="flex flex-col gap-4">
+      <div className="flex items-center gap-3">
+        <span className="text-xs inline-flex items-center rounded bg-slate-100 px-2 py-0.5 text-slate-700">Advanced</span>
+        <div className="text-sm text-slate-500">Dev tooling to inspect rule firing and network generation.</div>
+      </div>
       <div className="flex items-center gap-2">
         <Button onClick={handleRun} disabled={!model || isTracing}>
           {isTracing ? 'Tracing…' : 'Run network debugger'}

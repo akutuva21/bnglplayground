@@ -47,6 +47,7 @@ export const CartoonTab: React.FC<CartoonTabProps> = ({ model, selectedRuleId, o
       </TabList>
       <TabPanels>
         <TabPanel>
+          <div className="mb-3 text-sm text-slate-600">Compact rule icons: 🔗 bind • ✂️ unbind • 🌀 state change</div>
           <div className="max-h-[60vh] space-y-6 overflow-y-auto pr-2">
             {ruleDescriptors.map((rule) => (
               <RuleCartoon

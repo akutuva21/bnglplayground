@@ -41,6 +41,8 @@ const CustomLegend = (props: any) => {
 export const ResultsChart: React.FC<ResultsChartProps> = ({ results, model, visibleSpecies, onVisibleSpeciesChange, highlightedSeries = [] }) => {
   const [zoomHistory, setZoomHistory] = useState<ZoomDomain[]>([]);
   const [selection, setSelection] = useState<ZoomDomain | null>(null);
+  const [filterMode, setFilterMode] = useState<'all' | 'observables' | 'search'>('all');
+  const [searchTerm, setSearchTerm] = useState('');
 
   // Reset zoom state when the results object changes to avoid carrying zoom across runs
   useEffect(() => {
@@ -104,6 +106,13 @@ export const ResultsChart: React.FC<ResultsChartProps> = ({ results, model, visi
   };
 
   const speciesToPlot = results.headers.filter(h => h !== 'time');
+  const observablesSet = new Set((model?.observables ?? []).map((o) => o.name));
+  const filterVisibleSpecies = (name: string) => {
+    if (filterMode === 'all') return true;
+    if (filterMode === 'observables') return observablesSet.has(name);
+    if (filterMode === 'search') return searchTerm.trim() === '' ? true : name.toLowerCase().includes(searchTerm.toLowerCase());
+    return true;
+  };
   const currentDomain = zoomHistory.length > 0 ? zoomHistory[zoomHistory.length - 1] : undefined;
   const highlightSet = new Set(highlightedSeries);
 
@@ -140,7 +149,7 @@ export const ResultsChart: React.FC<ResultsChartProps> = ({ results, model, visi
             labelFormatter={(label) => `Time: ${typeof label === 'number' ? label.toFixed(2) : label}`}
           />
           <Legend onClick={handleLegendClick} content={<CustomLegend />} />
-          {speciesToPlot.map((speciesName, i) => (
+          {speciesToPlot.filter(filterVisibleSpecies).map((speciesName, i) => (
             <Line
               key={speciesName}
               type="monotone"
@@ -163,6 +172,21 @@ export const ResultsChart: React.FC<ResultsChartProps> = ({ results, model, visi
           )}
         </LineChart>
       </ResponsiveContainer>
+      <div className="mt-3 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <div className="inline-flex gap-2">
+            <button className={`px-3 py-1 rounded ${filterMode === 'all' ? 'bg-primary text-white' : 'bg-slate-100'}`} onClick={() => setFilterMode('all')}>All</button>
+            <button className={`px-3 py-1 rounded ${filterMode === 'observables' ? 'bg-primary text-white' : 'bg-slate-100'}`} onClick={() => setFilterMode('observables')}>Observables only</button>
+            <button className={`px-3 py-1 rounded ${filterMode === 'search' ? 'bg-primary text-white' : 'bg-slate-100'}`} onClick={() => setFilterMode('search')}>Search</button>
+          </div>
+          {filterMode === 'search' && (
+            <input value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} placeholder="Filter legends..." className="ml-2 border px-2 py-1 rounded text-sm" />
+          )}
+        </div>
+        <div>
+          <button onClick={() => { setZoomHistory([]); setSelection(null); onVisibleSpeciesChange(new Set(model?.observables.map(o => o.name) ?? [])); }} className="px-3 py-1 rounded bg-slate-100">Reset view</button>
+        </div>
+      </div>
       <div className="text-center text-xs text-slate-500 mt-2">
         Click and drag to zoom, double-click to reset.
       </div>

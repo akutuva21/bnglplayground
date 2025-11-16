@@ -5,11 +5,12 @@ import { SunIcon } from './icons/SunIcon';
 import { Button } from './ui/Button';
 
 interface HeaderProps {
-  onAboutClick: () => void;
+  onAboutClick: (focus?: string) => void;
   onTutorialsClick: () => void;
+  tutorialPill?: string | null;
 }
 
-export const Header: React.FC<HeaderProps> = ({ onAboutClick, onTutorialsClick }) => {
+export const Header: React.FC<HeaderProps> = ({ onAboutClick, onTutorialsClick, tutorialPill = null }) => {
   const [theme, toggleTheme] = useTheme();
 
   return (
@@ -32,7 +33,13 @@ export const Header: React.FC<HeaderProps> = ({ onAboutClick, onTutorialsClick }
           </div>
           <div className="flex items-center gap-4">
             <Button onClick={onTutorialsClick} variant="ghost">Tutorials</Button>
-            <Button onClick={onAboutClick} variant="ghost">About</Button>
+            {tutorialPill && (
+              <span className="ml-2 text-xs inline-flex items-center rounded bg-primary-100 dark:bg-primary-900/30 px-2 py-0.5 text-primary-800 dark:text-primary-200">{tutorialPill}</span>
+            )}
+            <Button onClick={() => onAboutClick('bngl')} variant="ghost">
+              What is BNGL?
+            </Button>
+            <Button onClick={() => onAboutClick()} variant="ghost">About</Button>
             <button
               onClick={toggleTheme}
               className="p-2 rounded-full text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-700"

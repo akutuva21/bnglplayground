@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { EditorPanel } from './components/EditorPanel';
 import { VisualizationPanel } from './components/VisualizationPanel';
 import { Header } from './components/Header';
@@ -13,6 +13,7 @@ import { TutorialModal } from './components/modals/TutorialModal';
 import { TUTORIALS, type TutorialProgressState } from './src/data/tutorials';
 
 function App() {
+  const PANEL_MAX_HEIGHT = 'calc(100vh - 220px)';
   const [code, setCode] = useState<string>(INITIAL_BNGL_CODE);
   const [model, setModel] = useState<BNGLModel | null>(null);
   const [results, setResults] = useState<SimulationResults | null>(null);
@@ -21,7 +22,9 @@ function App() {
   const [isSimulating, setIsSimulating] = useState(false);
   const [generationProgress, setGenerationProgress] = useState<string>('');
   const [isAboutModalOpen, setIsAboutModalOpen] = useState(false);
+  const [aboutFocus, setAboutFocus] = useState<string | null>(null);
   const [isTutorialModalOpen, setIsTutorialModalOpen] = useState(false);
+  const [activeVizTab, setActiveVizTab] = useState<number>(0);
   const [activeTutorialId, setActiveTutorialId] = useState<string | null>(null);
   const [tutorialProgress, setTutorialProgress] = useState<Record<string, TutorialProgressState>>({});
   const [validationWarnings, setValidationWarnings] = useState<ValidationWarning[]>([]);
@@ -115,7 +118,15 @@ function App() {
         description: `Simulation (${options.method})`,
       });
       setResults(simResults);
-      setStatus({ type: 'success', message: `Simulation (${options.method}) completed.` });
+      setStatus({ type: 'success', message: (
+        <span>
+          Simulation ({options.method}) completed.&nbsp;
+          Explore: <button className="underline" onClick={() => setActiveVizTab(0)}>Time Courses</button>,{' '}
+          <button className="underline" onClick={() => setActiveVizTab(1)}>Regulatory</button>,{' '}
+          <button className="underline" onClick={() => setActiveVizTab(3)}>FIM</button>,{' '}
+          <button className="underline" onClick={() => setActiveVizTab(4)}>Steady State</button>
+        </span>
+      ) });
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') {
         if (error.message.includes('cancelled by user')) {
@@ -240,18 +251,26 @@ function App() {
   return (
     <div className="flex min-h-screen flex-col bg-slate-50 font-sans text-slate-900 dark:bg-slate-900 dark:text-slate-100">
       <Header
-        onAboutClick={() => setIsAboutModalOpen(true)}
+        onAboutClick={(focus?: string) => {
+          setAboutFocus(focus ?? null);
+          setIsAboutModalOpen(true);
+        }}
         onTutorialsClick={() => setIsTutorialModalOpen(true)}
+        tutorialPill={
+          activeTutorialId
+            ? `Tutorial: ${TUTORIALS.find((t) => t.id === activeTutorialId)?.title ?? ''} ${((tutorialProgress[activeTutorialId]?.currentStepIndex ?? 0) + 1)}/${TUTORIALS.find((t) => t.id === activeTutorialId)?.steps.length ?? 0}`
+            : null
+        }
       />
 
-      <main className="flex-1 overflow-hidden">
-        <div className="container mx-auto flex h-full flex-col gap-6 p-4 sm:p-6 lg:p-8">
+      <main className="flex-1 min-h-0 overflow-hidden">
+        <div className="container mx-auto flex h-full min-h-0 flex-col gap-6 p-4 sm:p-6 lg:p-8">
           <div className="fixed top-20 right-8 z-50 w-full max-w-sm">
             {status && <StatusMessage status={status} onClose={handleStatusClose} />}
           </div>
 
-          <div className="grid flex-1 grid-cols-1 gap-6 lg:grid-cols-2">
-            <div className="flex min-h-0 min-w-0 flex-col overflow-hidden">
+          <div className="grid flex-1 min-h-0 grid-cols-1 gap-6 items-start lg:grid-cols-2">
+            <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden" style={{ maxHeight: PANEL_MAX_HEIGHT }}>
               <EditorPanel
                 code={code}
                 onCodeChange={handleCodeChange}
@@ -264,16 +283,16 @@ function App() {
                 editorMarkers={editorMarkers}
               />
             </div>
-            <div className="flex min-h-0 min-w-0 flex-col overflow-hidden">
-              <div className="flex-1 overflow-y-auto overflow-x-hidden">
-                <VisualizationPanel
-                  model={model}
-                  results={results}
-                  onSimulate={handleSimulate}
-                  isSimulating={isSimulating}
-                  onCancelSimulation={handleCancelSimulation}
-                />
-              </div>
+            <div className="flex min-w-0 flex-col">
+              <VisualizationPanel
+                model={model}
+                results={results}
+                onSimulate={handleSimulate}
+                isSimulating={isSimulating}
+                onCancelSimulation={handleCancelSimulation}
+                activeTabIndex={activeVizTab}
+                onActiveTabIndexChange={setActiveVizTab}
+              />
             </div>
           </div>
           <SimulationModal
@@ -296,7 +315,7 @@ function App() {
           />
         </div>
       </main>
-      <AboutModal isOpen={isAboutModalOpen} onClose={() => setIsAboutModalOpen(false)} />
+      <AboutModal isOpen={isAboutModalOpen} onClose={() => setIsAboutModalOpen(false)} focus={aboutFocus} />
     </div>
   );
 }

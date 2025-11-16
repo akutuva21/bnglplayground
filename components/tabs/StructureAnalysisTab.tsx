@@ -80,6 +80,10 @@ export const StructureAnalysisTab: React.FC<StructureAnalysisTabProps> = ({ mode
 
   return (
     <div className="space-y-6">
+      <div className="flex items-center gap-3">
+        <span className="text-xs inline-flex items-center rounded bg-slate-100 px-2 py-0.5 text-slate-700">Advanced</span>
+        <div className="text-sm text-slate-500">Use structural analyses after you have a model and basic plots.</div>
+      </div>
       <div>
         <h3 className="text-lg font-medium mb-2 text-slate-800 dark:text-slate-200">Species Connectivity</h3>
         <p className="text-sm text-slate-600 dark:text-slate-400 mb-4">

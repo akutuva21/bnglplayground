@@ -258,7 +258,7 @@ export const RegulatoryTab: React.FC<RegulatoryTabProps> = ({ model, results, se
             </div>
             <ContactMapViewer contactMap={contactMap} selectedRuleId={selectedRuleId} onSelectRule={onSelectRule} />
           </section>
-          <section className="grid gap-8 lg:grid-cols-2">
+          <section className="grid items-start gap-8 lg:grid-cols-2">
             <div>
               <div className="mb-3">
                 <h4 className="text-sm font-semibold text-slate-700 dark:text-slate-200">Atom–Rule Graph</h4>

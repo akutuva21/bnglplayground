@@ -1,6 +1,8 @@
+import React from 'react';
+
 export interface Status {
   type: 'success' | 'error' | 'warning' | 'info';
-  message: string;
+  message: string | React.ReactNode;
 }
 
 export type ValidationSeverity = 'error' | 'warning' | 'info';

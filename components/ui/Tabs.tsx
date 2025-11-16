@@ -7,8 +7,14 @@ interface TabsContextType {
 
 const TabsContext = createContext<TabsContextType | null>(null);
 
-export const Tabs: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [activeIndex, setActiveIndex] = useState(0);
+export const Tabs: React.FC<{ children: React.ReactNode; activeIndex?: number; onActiveIndexChange?: (idx: number) => void }> = ({ children, activeIndex: activeIndexProp, onActiveIndexChange }) => {
+  const [activeIndex, setActiveIndex] = useState(activeIndexProp ?? 0);
+  React.useEffect(() => {
+    if (typeof activeIndexProp === 'number' && activeIndexProp !== activeIndex) {
+      setActiveIndex(activeIndexProp);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeIndexProp]);
   return (
     <TabsContext.Provider value={{ activeIndex, setActiveIndex }}>
       <div className="flex h-full min-h-0 flex-col">{children}</div>
@@ -19,14 +25,18 @@ export const Tabs: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 export const TabList: React.FC<{ children: React.ReactNode[] | React.ReactNode }> = ({ children }) => {
   const context = useContext(TabsContext);
   if (!context) throw new Error('TabList must be used within a Tabs component');
+  const { activeIndex, setActiveIndex } = context;
 
   return (
     <div className="border-b border-stone-200 dark:border-slate-700">
       <nav className="-mb-px flex space-x-6 overflow-x-auto" aria-label="Tabs">
         {Children.map(children, (child, index) =>
           React.cloneElement(child as React.ReactElement<TabProps>, {
-            isActive: index === context.activeIndex,
-            onClick: () => context.setActiveIndex(index),
+            isActive: index === activeIndex,
+            onClick: () => {
+              setActiveIndex(index);
+              if (onActiveIndexChange) onActiveIndexChange(index);
+            },
           })
         )}
       </nav>

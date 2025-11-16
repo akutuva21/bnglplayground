@@ -2,7 +2,7 @@ import React, { useCallback, useMemo, useState } from 'react';
 import { Card } from '../ui/Card';
 import { Select } from '../ui/Select';
 import { Button } from '../ui/Button';
-import { LoadingSpinner } from '../ui/LoadingSpinner';
+// LoadingSpinner not required in the FIMTab header - analysis uses custom progress UI
 import { BNGLModel } from '../../types';
 import { bnglService } from '../../services/bnglService';
 import { computeFIM, exportFIM, type FIMResult } from '../../services/fim';
@@ -283,7 +283,10 @@ export const FIMTab: React.FC<FIMTabProps> = ({ model }) => {
       <div className="rounded-xl border border-indigo-400/60 bg-gradient-to-r from-slate-900 via-indigo-900 to-slate-800 text-indigo-50 shadow-lg">
         <div className="flex flex-col gap-6 p-6 md:flex-row md:items-center md:justify-between">
           <div className="space-y-3 max-w-2xl">
-            <h2 className="text-xl font-semibold">Guided Identifiability Assistant</h2>
+            <div className="flex items-center gap-3">
+              <h2 className="text-xl font-semibold">Guided Identifiability Assistant</h2>
+              <span className="text-xs inline-flex items-center rounded bg-slate-100 px-2 py-0.5 text-slate-700">Advanced</span>
+            </div>
             <p className="text-sm text-indigo-100/90">
               Start with a preset to size the analysis, then refine manually. We keep track of the current configuration
               and summarize how your parameter choices map onto reaction rules.
@@ -345,7 +348,7 @@ export const FIMTab: React.FC<FIMTabProps> = ({ model }) => {
               <span className="text-sm text-slate-600">Use log-parameter sensitivities (d/d ln p)</span>
             </label>
             <div className="flex gap-2">
-              <Button onClick={handleCompute} disabled={isComputing || !model || selected.length === 0}>Run Identifiability Analysis</Button>
+              <Button onClick={() => handleCompute()} disabled={isComputing || !model || selected.length === 0}>Run Identifiability Analysis</Button>
               {isComputing && <Button variant="danger" onClick={handleCancel}>Cancel</Button>}
             </div>
             {isComputing && (
