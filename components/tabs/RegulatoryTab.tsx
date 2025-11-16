@@ -8,6 +8,9 @@ import { buildContactMap } from '../../services/visualization/contactMapBuilder'
 import { buildAtomRuleGraph } from '../../services/visualization/arGraphBuilder';
 import { buildRuleFlowGraph } from '../../services/visualization/ruleFlowBuilder';
 import { buildRegulatoryInsights } from '../../services/visualization/regulatoryInsights';
+import { classifyRuleChanges } from '../../services/ruleAnalysis/ruleChangeClassifier';
+import type { RuleChangeSummary } from '../../services/ruleAnalysis/ruleChangeTypes';
+import { RuleChangeBadges, renderHumanSummary } from '../RuleChangeBadges';
 
 interface RegulatoryTabProps {
   model: BNGLModel | null;
@@ -28,6 +31,22 @@ export const RegulatoryTab: React.FC<RegulatoryTabProps> = ({ model, results, se
   const [highlightedSeries, setHighlightedSeries] = useState<string[]>([]);
 
   const insights = useMemo(() => buildRegulatoryInsights(model), [model]);
+
+  const ruleClassifications = useMemo(() => {
+    if (!model) {
+      return {} as Record<string, RuleChangeSummary>;
+    }
+    return model.reactionRules.reduce((acc, rule, index) => {
+      const ruleId = getRuleId(rule, index);
+      const ruleName = getRuleLabel(rule, index);
+      try {
+        acc[ruleId] = classifyRuleChanges(rule, { ruleId, ruleName });
+      } catch (error) {
+        console.warn('Failed to classify rule', ruleId, error);
+      }
+      return acc;
+    }, {} as Record<string, RuleChangeSummary>);
+  }, [model]);
 
   const contactMap = useMemo(() => {
     if (!model) {
@@ -130,6 +149,7 @@ export const RegulatoryTab: React.FC<RegulatoryTabProps> = ({ model, results, se
   }, [observablesKey, results]);
 
   const selectedRuleImpact = selectedRuleId && insights ? insights.ruleImpacts[selectedRuleId] : null;
+  const selectedRuleClassification = selectedRuleId ? ruleClassifications[selectedRuleId] : null;
   const selectedAtomMeta = selectedAtomId && insights ? insights.atomMetadata[selectedAtomId] : null;
   const atomSpecies = selectedAtomId && insights ? insights.atomToSpecies[selectedAtomId] ?? [] : [];
   const atomUsage = selectedAtomId && insights ? insights.atomRuleUsage[selectedAtomId] : undefined;
@@ -176,6 +196,14 @@ export const RegulatoryTab: React.FC<RegulatoryTabProps> = ({ model, results, se
             <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
               Follow how a rule manipulates structural atoms, then inspect their time courses.
             </p>
+            {selectedRuleClassification && (
+              <div className="mt-2 rounded-md border border-slate-200 bg-slate-50 p-2 text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-300">
+                <RuleChangeBadges summary={selectedRuleClassification} size="xs" />
+                <p className="mt-1 text-[11px] leading-4 text-slate-600 dark:text-slate-300">
+                  {renderHumanSummary(selectedRuleClassification)}
+                </p>
+              </div>
+            )}
           </div>
           <div className="inline-flex rounded-lg border border-slate-200 bg-slate-100 p-1 text-xs font-medium dark:border-slate-700 dark:bg-slate-800">
             <button

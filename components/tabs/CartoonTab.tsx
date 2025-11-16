@@ -4,6 +4,8 @@ import { RuleCartoon } from '../RuleCartoon';
 import { CompactRuleVisualization } from '../CompactRuleVisualization';
 import { parseRuleForVisualization } from '../../services/visualization/ruleParser';
 import { buildCompactRule } from '../../services/visualization/compactRuleBuilder';
+import { classifyRuleChanges } from '../../services/ruleAnalysis/ruleChangeClassifier';
+import type { RuleChangeSummary } from '../../services/ruleAnalysis/ruleChangeTypes';
 import { Tabs, TabList, Tab, TabPanels, TabPanel } from '../ui/Tabs';
 
 interface CartoonTabProps {
@@ -21,12 +23,19 @@ export const CartoonTab: React.FC<CartoonTabProps> = ({ model, selectedRuleId, o
     return model.reactionRules.map((rule, index) => {
       const ruleId = rule.name ?? `rule_${index + 1}`;
       const displayName = rule.name ?? `Rule ${index + 1}`;
+      let classification: RuleChangeSummary | null = null;
+      try {
+        classification = classifyRuleChanges(rule, { ruleId, ruleName: displayName });
+      } catch (error) {
+        console.warn('Failed to classify rule', ruleId, error);
+      }
 
       return {
         id: ruleId,
         displayName,
         visualization: parseRuleForVisualization(rule, index),
         compact: buildCompactRule(rule, displayName),
+        classification,
       };
     });
   }, [model]);
@@ -57,6 +66,7 @@ export const CartoonTab: React.FC<CartoonTabProps> = ({ model, selectedRuleId, o
                 rule={rule.visualization}
                 isSelected={rule.id === selectedRuleId}
                 onSelect={onSelectRule}
+                classification={rule.classification}
               />
             ))}
           </div>
@@ -71,6 +81,7 @@ export const CartoonTab: React.FC<CartoonTabProps> = ({ model, selectedRuleId, o
                 displayName={rule.displayName}
                 isSelected={rule.id === selectedRuleId}
                 onSelect={onSelectRule}
+                classification={rule.classification}
               />
             ))}
           </div>

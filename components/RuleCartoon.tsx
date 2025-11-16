@@ -1,4 +1,6 @@
 import React, { useMemo } from 'react';
+import { RuleChangeBadges, renderHumanSummary } from './RuleChangeBadges';
+import type { RuleChangeSummary } from '../services/ruleAnalysis/ruleChangeTypes';
 import type {
   VisualizationComponentRole,
   VisualizationMolecule,
@@ -157,6 +159,7 @@ interface RuleCartoonProps {
   isSelected?: boolean;
   onSelect?: (ruleId: string) => void;
   showBondLabels?: boolean;
+  classification?: RuleChangeSummary | null;
 }
 
 export const RuleCartoon: React.FC<RuleCartoonProps> = ({
@@ -166,6 +169,7 @@ export const RuleCartoon: React.FC<RuleCartoonProps> = ({
   isSelected = false,
   onSelect,
   showBondLabels = true,
+  classification,
 }) => {
   const annotated = useMemo(() => annotateRule(rule), [rule]);
 
@@ -185,6 +189,14 @@ export const RuleCartoon: React.FC<RuleCartoonProps> = ({
         <span className="text-sm font-semibold text-slate-700 dark:text-slate-200">{displayName}</span>
         <span className="text-xs font-mono text-slate-500 dark:text-slate-400">{rule.rate}</span>
       </div>
+      {classification && (
+        <div className="mb-4 rounded-md border border-slate-200 bg-white/80 p-2 text-xs text-slate-600 shadow-inner dark:border-slate-700 dark:bg-slate-900/60 dark:text-slate-300">
+          <div className="mb-1 flex flex-wrap items-center gap-2">
+            <RuleChangeBadges summary={classification} size="xs" />
+          </div>
+          <p className="text-[11px] leading-4 text-slate-600 dark:text-slate-300">{renderHumanSummary(classification)}</p>
+        </div>
+      )}
       <div className="flex flex-wrap items-center justify-center gap-6">
         <div className="flex flex-wrap items-center gap-3">
           {annotated.reactants.map((complex, index) => (

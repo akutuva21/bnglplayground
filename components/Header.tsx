@@ -27,8 +27,8 @@ export const Header: React.FC<HeaderProps> = ({ onAboutClick, onTutorialsClick, 
               />
             </div>
             <div className="flex flex-col">
-              <h1 className="text-xl font-semibold leading-tight text-slate-800 dark:text-slate-100 sm:text-2xl">BioNetGen Visualizer</h1>
-              <p className="text-sm text-slate-500 dark:text-slate-300 sm:text-base">Explore, simulate, and understand rule-based biological models</p>
+              <h1 className="text-xl font-semibold leading-tight text-slate-800 dark:text-slate-100 sm:text-2xl">BioNetGen Web Simulator</h1>
+              <p className="text-sm text-slate-500 dark:text-slate-300 sm:text-base">Write BNGL, parse models, simulate ODE/SSA, and visualize the results.</p>
             </div>
           </div>
           <div className="flex items-center gap-4">
@@ -40,6 +40,9 @@ export const Header: React.FC<HeaderProps> = ({ onAboutClick, onTutorialsClick, 
               What is BNGL?
             </Button>
             <Button onClick={() => onAboutClick()} variant="ghost">About</Button>
+            <div className="text-xs text-slate-500 dark:text-slate-300 leading-tight">
+              New here? Start with <strong>Simple Dimerization</strong> → Simulate
+            </div>
             <button
               onClick={toggleTheme}
               className="p-2 rounded-full text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-700"

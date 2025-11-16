@@ -11,7 +11,16 @@ interface ExampleGalleryModalProps {
   onSelect: (code: string) => void;
 }
 
-const allTags = [...new Set(EXAMPLES.flatMap(ex => ex.tags))];
+const tagCounts: Record<string, number> = EXAMPLES.reduce((acc, example) => {
+  example.tags.forEach((tag) => {
+    acc[tag] = (acc[tag] ?? 0) + 1;
+  });
+  return acc;
+}, {} as Record<string, number>);
+
+const visibleTags = [...new Set(EXAMPLES.flatMap(ex => ex.tags))]
+  .filter((tag) => (tagCounts[tag] ?? 0) > 2)
+  .sort((a, b) => a.localeCompare(b));
 
 export const ExampleGalleryModal: React.FC<ExampleGalleryModalProps> = ({ isOpen, onClose, onSelect }) => {
   const [searchTerm, setSearchTerm] = useState('');
@@ -33,7 +42,10 @@ export const ExampleGalleryModal: React.FC<ExampleGalleryModalProps> = ({ isOpen
   React.useEffect(() => {
     if (!isOpen) {
       setFocusedExample(null);
+      return;
     }
+    setSearchTerm('');
+    setSelectedTags(new Set());
   }, [isOpen]);
   
   const handleTagClick = (tag: string) => {
@@ -46,9 +58,15 @@ export const ExampleGalleryModal: React.FC<ExampleGalleryModalProps> = ({ isOpen
       setSelectedTags(newTags);
   }
 
+  const handleClearFilters = () => {
+    setSearchTerm('');
+    setSelectedTags(new Set());
+  };
+
   return (
     <Modal isOpen={isOpen} onClose={onClose} title="Example Model Gallery" size="3xl">
       <div className="mt-4">
+        <p className="text-sm text-slate-600 dark:text-slate-300">Tip: start with “Simple Dimerization” or “Michaelis-Menten” if you are new to BNGL.</p>
         <div className="flex flex-col md:flex-row gap-4 mb-4">
           <div className="relative flex-grow">
             <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
@@ -61,8 +79,8 @@ export const ExampleGalleryModal: React.FC<ExampleGalleryModalProps> = ({ isOpen
             />
           </div>
         </div>
-        <div className="flex flex-wrap gap-2 mb-6 border-b border-stone-200 dark:border-slate-700 pb-4">
-            {allTags.map(tag => (
+            <div className="flex flex-wrap gap-2 mb-6 border-b border-stone-200 dark:border-slate-700 pb-4">
+            {visibleTags.map(tag => (
                 <button 
                   key={tag}
                   onClick={() => handleTagClick(tag)}
@@ -75,6 +93,12 @@ export const ExampleGalleryModal: React.FC<ExampleGalleryModalProps> = ({ isOpen
                     {tag}
                 </button>
             ))}
+            <button
+              onClick={handleClearFilters}
+              className="ml-auto px-3 py-1 text-xs font-medium rounded-full border border-slate-300 text-slate-700 dark:border-slate-600 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700"
+            >
+              Clear filters
+            </button>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 max-h-[75vh] overflow-y-auto pr-2">
           {filteredExamples.length > 0 ? filteredExamples.map(example => (
@@ -90,9 +114,9 @@ export const ExampleGalleryModal: React.FC<ExampleGalleryModalProps> = ({ isOpen
                 <h3 className="font-semibold text-slate-800 dark:text-slate-100">{example.name}</h3>
                 <p className="text-sm text-slate-600 dark:text-slate-300 mt-1">{example.description}</p>
                 <div className="flex flex-wrap gap-1 mt-3">
-                    {example.tags.map(tag => (
-                        <span key={tag} className="px-2 py-0.5 text-xs bg-primary-100 dark:bg-primary-900/50 text-primary-800 dark:text-primary-300 rounded-full">{tag}</span>
-                    ))}
+                  {example.tags.filter((tag) => visibleTags.includes(tag)).map(tag => (
+                    <span key={tag} className="px-2 py-0.5 text-xs bg-primary-100 dark:bg-primary-900/50 text-primary-800 dark:text-primary-300 rounded-full">{tag}</span>
+                  ))}
                 </div>
               </div>
                 <button 

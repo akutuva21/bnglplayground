@@ -1,4 +1,6 @@
 import React from 'react';
+import { RuleChangeBadges, renderHumanSummary } from './RuleChangeBadges';
+import type { RuleChangeSummary } from '../services/ruleAnalysis/ruleChangeTypes';
 import type { CompactRule, RuleOperation, VisualizationComponent } from '../types/visualization';
 
 const operationStyles: Record<RuleOperation['type'], string> = {
@@ -54,9 +56,10 @@ interface CompactRuleVisualizationProps {
   displayName: string;
   isSelected?: boolean;
   onSelect?: (ruleId: string) => void;
+  classification?: RuleChangeSummary | null;
 }
 
-export const CompactRuleVisualization: React.FC<CompactRuleVisualizationProps> = ({ rule, ruleId, displayName, isSelected = false, onSelect }) => {
+export const CompactRuleVisualization: React.FC<CompactRuleVisualizationProps> = ({ rule, ruleId, displayName, isSelected = false, onSelect, classification }) => {
   const hasOperations = rule.operations.length > 0;
 
   const baseClasses = 'w-full rounded-lg border border-slate-200 bg-white p-4 text-left shadow-sm transition focus:outline-none focus:ring-2 focus:ring-sky-500 dark:border-slate-700 dark:bg-slate-900';
@@ -78,6 +81,14 @@ export const CompactRuleVisualization: React.FC<CompactRuleVisualizationProps> =
         <span className="text-sm font-semibold text-slate-700 dark:text-slate-200">{displayName}</span>
         <span className="text-xs font-mono text-slate-500 dark:text-slate-400">k = {rule.rate}</span>
       </div>
+      {classification && (
+        <div className="mb-4 rounded-md border border-slate-100 bg-slate-50/70 p-2 text-xs text-slate-600 dark:border-slate-700/70 dark:bg-slate-800/60 dark:text-slate-300">
+          <div className="mb-1 flex flex-wrap items-center gap-2">
+            <RuleChangeBadges summary={classification} size="xs" />
+          </div>
+          <p className="text-[11px] leading-4 text-slate-600 dark:text-slate-300">{renderHumanSummary(classification)}</p>
+        </div>
+      )}
       <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)]">
         <div>
           <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Context</div>
