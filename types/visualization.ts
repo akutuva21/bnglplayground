@@ -4,12 +4,15 @@ export interface VisualizationComponent {
   bondLabel?: string;
   bondPartner?: string;
   role?: VisualizationComponentRole;
+  bondRequirement?: 'free' | 'bound' | 'either' | null;
 }
 
 export interface VisualizationMolecule {
   name: string;
   components: VisualizationComponent[];
   position?: { x: number; y: number };
+  color?: string;
+  textColor?: string;
 }
 
 export type VisualizationComponentRole = 'context' | 'transformed' | 'created';
@@ -22,6 +25,7 @@ export interface VisualizationRule {
   rate: string;
   reverseRate?: string;
   isBidirectional: boolean;
+  comment?: string;
 }
 
 export type OperationType =
@@ -44,6 +48,7 @@ export interface CompactRule {
   context: VisualizationMolecule[];
   operations: RuleOperation[];
   rate: string;
+  comment?: string;
 }
 
 export interface ContactEdge {
@@ -55,8 +60,15 @@ export interface ContactEdge {
   ruleLabels: string[];
 }
 
+export interface ContactNode {
+  id: string;
+  label: string;
+  type: 'molecule' | 'component' | 'compartment';
+  parent?: string; // parent is molecule id for compound nodes or compartment id when molecule belongs to a compartment
+}
+
 export interface ContactMap {
-  nodes: string[];
+  nodes: ContactNode[];
   edges: ContactEdge[];
 }
 
@@ -83,6 +95,7 @@ export interface RuleFlowNode {
   displayName: string;
   type: 'binding' | 'modification' | 'synthesis' | 'degradation' | 'complex';
   layer: number;
+  color?: string;
 }
 
 export interface RuleFlowEdge {

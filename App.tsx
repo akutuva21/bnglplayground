@@ -2,8 +2,10 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import { EditorPanel } from './components/EditorPanel';
 import { VisualizationPanel } from './components/VisualizationPanel';
 import { Header } from './components/Header';
+import { exportToSBML } from './services/exportSBML';
 import { StatusMessage } from './components/ui/StatusMessage';
 import { AboutModal } from './components/AboutModal';
+import { VisualizationConventionsModal } from './components/VisualizationConventionsModal';
 import { bnglService } from './services/bnglService';
 import { BNGLModel, SimulationOptions, SimulationResults, Status, ValidationWarning, EditorMarker } from './types';
 import { INITIAL_BNGL_CODE } from './constants';
@@ -23,6 +25,7 @@ function App() {
   const [generationProgress, setGenerationProgress] = useState<string>('');
   const [isAboutModalOpen, setIsAboutModalOpen] = useState(false);
   const [aboutFocus, setAboutFocus] = useState<string | null>(null);
+  const [isVizModalOpen, setIsVizModalOpen] = useState(false);
   const [isTutorialModalOpen, setIsTutorialModalOpen] = useState(false);
   const [activeVizTab, setActiveVizTab] = useState<number>(0);
   const [activeTutorialId, setActiveTutorialId] = useState<string | null>(null);
@@ -252,6 +255,10 @@ function App() {
     <div className="flex min-h-screen flex-col bg-slate-50 font-sans text-slate-900 dark:bg-slate-900 dark:text-slate-100">
       <Header
         onAboutClick={(focus?: string) => {
+          if (focus === 'viz') {
+            setIsVizModalOpen(true);
+            return;
+          }
           setAboutFocus(focus ?? null);
           setIsAboutModalOpen(true);
         }}
@@ -261,6 +268,26 @@ function App() {
             ? `Tutorial: ${TUTORIALS.find((t) => t.id === activeTutorialId)?.title ?? ''} ${((tutorialProgress[activeTutorialId]?.currentStepIndex ?? 0) + 1)}/${TUTORIALS.find((t) => t.id === activeTutorialId)?.steps.length ?? 0}`
             : null
         }
+        onExportSBML={() => {
+          if (!model) {
+            setStatus({ type: 'warning', message: 'No model to export. Parse or load a model first.' });
+            return;
+          }
+          try {
+            const xml = exportToSBML(model);
+            const blob = new Blob([xml], { type: 'application/xml' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'bngl_export.sbml';
+            a.click();
+            URL.revokeObjectURL(url);
+            setStatus({ type: 'success', message: 'SBML export generated.' });
+          } catch (e) {
+            setStatus({ type: 'error', message: 'Failed to export SBML.' });
+            console.warn('SBML export failed', e);
+          }
+        }}
       />
 
       <main className="flex-1 min-h-0 overflow-hidden">
@@ -316,6 +343,7 @@ function App() {
         </div>
       </main>
       <AboutModal isOpen={isAboutModalOpen} onClose={() => setIsAboutModalOpen(false)} focus={aboutFocus} />
+      <VisualizationConventionsModal isOpen={isVizModalOpen} onClose={() => setIsVizModalOpen(false)} />
     </div>
   );
 }

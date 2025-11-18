@@ -35,6 +35,7 @@ export interface Example {
 export interface BNGLMoleculeType {
   name: string;
   components: string[];
+  comment?: string;
 }
 
 export interface BNGLSpecies {
@@ -46,6 +47,14 @@ export interface BNGLObservable {
   type: 'molecules' | 'species';
   name: string;
   pattern: string;
+  comment?: string;
+}
+
+export interface BNGLCompartment {
+  name: string;
+  dimension: number;
+  size: number;
+  parent?: string;
 }
 
 export interface BNGLReaction {
@@ -62,6 +71,7 @@ export interface ReactionRule {
   rate: string;
   reverseRate?: string;
   isBidirectional: boolean;
+  comment?: string;
 }
 
 export interface BNGLModel {
@@ -71,6 +81,7 @@ export interface BNGLModel {
   observables: BNGLObservable[];
   reactions: BNGLReaction[];
   reactionRules: ReactionRule[];
+  compartments?: BNGLCompartment[];
   // Options provided to generate_network() in the BNGL script.
   // These should be parsed from the BNGL file and respected during network generation.
   networkOptions?: {

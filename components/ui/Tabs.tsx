@@ -3,12 +3,17 @@ import React, { createContext, useContext, useState, Children } from 'react';
 interface TabsContextType {
   activeIndex: number;
   setActiveIndex: (index: number) => void;
+  onActiveIndexChange?: (index: number) => void;
 }
 
 const TabsContext = createContext<TabsContextType | null>(null);
 
 export const Tabs: React.FC<{ children: React.ReactNode; activeIndex?: number; onActiveIndexChange?: (idx: number) => void }> = ({ children, activeIndex: activeIndexProp, onActiveIndexChange }) => {
-  const [activeIndex, setActiveIndex] = useState(activeIndexProp ?? 0);
+  const [activeIndex, setActiveIndexState] = useState(activeIndexProp ?? 0);
+  const setActiveIndex = (idx: number) => {
+    setActiveIndexState(idx);
+    if (onActiveIndexChange) onActiveIndexChange(idx);
+  };
   React.useEffect(() => {
     if (typeof activeIndexProp === 'number' && activeIndexProp !== activeIndex) {
       setActiveIndex(activeIndexProp);
@@ -16,7 +21,7 @@ export const Tabs: React.FC<{ children: React.ReactNode; activeIndex?: number; o
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeIndexProp]);
   return (
-    <TabsContext.Provider value={{ activeIndex, setActiveIndex }}>
+    <TabsContext.Provider value={{ activeIndex, setActiveIndex, onActiveIndexChange }}>
       <div className="flex h-full min-h-0 flex-col">{children}</div>
     </TabsContext.Provider>
   );
@@ -35,7 +40,6 @@ export const TabList: React.FC<{ children: React.ReactNode[] | React.ReactNode }
             isActive: index === activeIndex,
             onClick: () => {
               setActiveIndex(index);
-              if (onActiveIndexChange) onActiveIndexChange(index);
             },
           })
         )}

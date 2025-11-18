@@ -10,7 +10,7 @@ export class Component {
   states: string[];           // allowed state names (from molecule type)
   state?: string;             // current state (for species instances)
   edges: Map<number, number>; // component index => bond partner component index
-  wildcard?: '+' | '?';       // bond wildcard semantics
+  wildcard?: '+' | '?' | '-';  // bond wildcard semantics (include '!' modifiers like !+, !? and !-)
 
   constructor(name: string, states: string[] = []) {
     this.name = name;

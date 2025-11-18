@@ -1,6 +1,7 @@
 import React, { useMemo } from 'react';
 import { RuleChangeBadges, renderHumanSummary } from './RuleChangeBadges';
 import type { RuleChangeSummary } from '../services/ruleAnalysis/ruleChangeTypes';
+import { MoleculeGlyph } from './MoleculeGlyph';
 import type {
   VisualizationComponentRole,
   VisualizationMolecule,
@@ -12,36 +13,13 @@ interface MoleculeVisualizerProps {
   showBondLabels?: boolean;
 }
 
-const roleClasses: Record<VisualizationComponentRole, string> = {
-  context: 'border-slate-300 bg-slate-100 text-slate-700 dark:border-slate-600 dark:bg-slate-800/60 dark:text-slate-200',
-  transformed: 'border-orange-400 bg-orange-100 text-orange-900 dark:border-orange-400 dark:bg-orange-900/40 dark:text-orange-200',
-  created: 'border-emerald-500 bg-emerald-100 text-emerald-900 dark:border-emerald-500 dark:bg-emerald-900/40 dark:text-emerald-200',
+const roleClasses: Record<'context' | 'transformed' | 'created', string> = {
+  context: 'opacity-60 filter grayscale dark:opacity-60',
+  transformed: 'opacity-100',
+  created: 'opacity-100',
 };
 
-const MoleculeVisualizer: React.FC<MoleculeVisualizerProps> = ({ molecule, showBondLabels = true }) => (
-  <div className="flex w-44 flex-col items-center gap-2 rounded-lg border-2 border-slate-300 bg-white p-3 shadow-sm dark:border-slate-600 dark:bg-slate-800">
-    <div className="w-full border-b border-slate-200 pb-1 text-center text-sm font-semibold text-primary dark:border-slate-700 dark:text-primary-300">
-      {molecule.name}
-    </div>
-    <div className="flex flex-wrap items-center justify-center gap-1">
-      {molecule.components.map((component, index) => {
-        const hasState = Boolean(component.state);
-        const role = component.role ?? 'context';
-        const baseClass = roleClasses[role];
-
-        return (
-          <div key={`${component.name}-${index}`} className={`rounded-md border px-2 py-1 text-xs ${baseClass}`}>
-            <span className="font-semibold">{component.name}</span>
-            {hasState && <span className="ml-1 text-slate-600 dark:text-slate-300">~{component.state}</span>}
-            {showBondLabels && component.bondLabel && (
-              <span className="ml-1 font-mono text-[11px] text-amber-700 dark:text-amber-300">{component.bondLabel}</span>
-            )}
-          </div>
-        );
-      })}
-    </div>
-  </div>
-);
+// removed MoleculeVisualizer; now render molecules via MoleculeGlyph
 
 interface ComplexVisualizerProps {
   complex: VisualizationMolecule[];
@@ -52,7 +30,14 @@ const ComplexVisualizer: React.FC<ComplexVisualizerProps> = ({ complex, showBond
   <div className="flex flex-wrap items-center gap-2">
     {complex.map((molecule, index) => (
       <React.Fragment key={`${molecule.name}-${index}`}>
-        <MoleculeVisualizer molecule={molecule} showBondLabels={showBondLabels} />
+        {(() => {
+          const moleculeRole = molecule.components.every((c) => c.role === 'context') ? 'context' : 'transformed';
+          return (
+            <div className={`${roleClasses[moleculeRole]}`}>
+              <MoleculeGlyph molecule={molecule} showBondLabels={showBondLabels} />
+            </div>
+          );
+        })()}
         {index < complex.length - 1 && <span className="text-xl text-slate-400">•</span>}
       </React.Fragment>
     ))}
@@ -189,6 +174,9 @@ export const RuleCartoon: React.FC<RuleCartoonProps> = ({
         <span className="text-sm font-semibold text-slate-700 dark:text-slate-200">{displayName}</span>
         <span className="text-xs font-mono text-slate-500 dark:text-slate-400">{rule.rate}</span>
       </div>
+      {rule.comment && (
+        <div className="mb-2 text-xs text-slate-500 dark:text-slate-400 italic">{rule.comment}</div>
+      )}
       {classification && (
         <div className="mb-4 rounded-md border border-slate-200 bg-white/80 p-2 text-xs text-slate-600 shadow-inner dark:border-slate-700 dark:bg-slate-900/60 dark:text-slate-300">
           <div className="mb-1 flex flex-wrap items-center gap-2">

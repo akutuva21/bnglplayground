@@ -8,9 +8,10 @@ interface HeaderProps {
   onAboutClick: (focus?: string) => void;
   onTutorialsClick: () => void;
   tutorialPill?: string | null;
+  onExportSBML?: () => void;
 }
 
-export const Header: React.FC<HeaderProps> = ({ onAboutClick, onTutorialsClick, tutorialPill = null }) => {
+export const Header: React.FC<HeaderProps> = ({ onAboutClick, onTutorialsClick, tutorialPill = null, onExportSBML }) => {
   const [theme, toggleTheme] = useTheme();
 
   return (
@@ -39,6 +40,7 @@ export const Header: React.FC<HeaderProps> = ({ onAboutClick, onTutorialsClick, 
             <Button onClick={() => onAboutClick('bngl')} variant="ghost">
               What is BNGL?
             </Button>
+            <Button onClick={() => onAboutClick('viz')} variant="ghost">Viz conventions</Button>
             <Button onClick={() => onAboutClick()} variant="ghost">About</Button>
             <div className="text-xs text-slate-500 dark:text-slate-300 leading-tight">
               New here? Start with <strong>Simple Dimerization</strong> → Simulate
@@ -50,6 +52,7 @@ export const Header: React.FC<HeaderProps> = ({ onAboutClick, onTutorialsClick, 
             >
               {theme === 'light' ? <MoonIcon className="w-6 h-6" /> : <SunIcon className="w-6 h-6" />}
             </button>
+            <Button onClick={onExportSBML} variant="ghost">Export SBML</Button>
           </div>
         </div>
       </div>

@@ -16,6 +16,7 @@ import {
   Tooltip,
   ReferenceArea,
 } from 'recharts';
+import { FIMHeatmap } from '../../components/FIMHeatmap';
 
 interface FIMTabProps {
   model: BNGLModel | null;
@@ -1134,36 +1135,7 @@ export const FIMTab: React.FC<FIMTabProps> = ({ model }) => {
                 <div className="text-sm text-slate-600">Pearson correlations between parameter estimates. Red indicates strong correlations (potential identifiability issues).</div>
                 <div className="overflow-auto mt-2">
                   <div className="inline-block align-top">
-                    <table className="border-collapse" style={{ borderSpacing: 0 }}>
-                      <thead>
-                        <tr>
-                          <th className="px-2 py-1" />
-                          {result.paramNames.map((p) => (
-                            <th key={p} className="px-2 py-1 text-xs font-mono">{p}</th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {result.correlations.map((row, i) => (
-                          <tr key={i} className="align-top">
-                            <td className="px-2 py-1 text-xs font-mono">{result.paramNames[i]}</td>
-                            {row.map((v, j) => {
-                              const absVal = Math.abs(v);
-                              let bg = 'rgb(245, 245, 245)'; // light gray for low
-                              if (absVal > 0.95) bg = 'rgb(192, 21, 47)'; // dark red for very high
-                              else if (absVal > 0.8) bg = 'rgb(255, 84, 89)'; // red
-                              else if (absVal > 0.5) bg = 'rgb(230, 129, 97)'; // orange
-                              else if (absVal > 0.2) bg = 'rgb(50, 184, 198)'; // teal
-                              return (
-                                <td key={j} className="px-1 py-1 text-xs" style={{ background: bg }}>
-                                  <div className="px-2">{v.toFixed(3)}</div>
-                                </td>
-                              );
-                            })}
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                    <FIMHeatmap correlations={result.correlations} paramNames={result.paramNames} cellSize={26} />
                   </div>
                 </div>
               </div>

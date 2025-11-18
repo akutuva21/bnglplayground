@@ -56,7 +56,8 @@ export const CartoonTab: React.FC<CartoonTabProps> = ({ model, selectedRuleId, o
       </TabList>
       <TabPanels>
         <TabPanel>
-          <div className="mb-3 text-sm text-slate-600">Compact rule icons: 🔗 bind • ✂️ unbind • 🌀 state change</div>
+          <div className="mb-3 text-sm text-slate-600">Compact rule icons: 🔗 bind • ✂️ unbind • 🌀 state change — green represents new bonds</div>
+          <div className="mb-3 text-xs text-slate-500 dark:text-slate-400">Legend: molecules use hashed colors; <span className="font-semibold">grey</span> molecules are context-only, <span className="font-semibold">colored</span> molecules are affected or created.</div>
           <div className="max-h-[60vh] space-y-6 overflow-y-auto pr-2">
             {ruleDescriptors.map((rule) => (
               <RuleCartoon

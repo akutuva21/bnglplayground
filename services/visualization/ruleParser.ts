@@ -17,5 +17,6 @@ export const parseRuleForVisualization = (rule: ReactionRule, index: number): Vi
     rate: String(rule.rate),
     reverseRate: rule.reverseRate ? String(rule.reverseRate) : undefined,
     isBidirectional: rule.isBidirectional,
+    comment: rule.comment,
   };
 };

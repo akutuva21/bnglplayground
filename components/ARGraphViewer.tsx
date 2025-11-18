@@ -1,6 +1,8 @@
 import React, { useEffect, useRef } from 'react';
+import { useTheme } from '../hooks/useTheme';
 import cytoscape from 'cytoscape';
 import type { AtomRuleGraph } from '../types/visualization';
+import { colorFromName, foregroundForBackground } from '../services/visualization/colorUtils';
 
 interface ARGraphViewerProps {
   arGraph: AtomRuleGraph;
@@ -11,6 +13,7 @@ interface ARGraphViewerProps {
 }
 
 export const ARGraphViewer: React.FC<ARGraphViewerProps> = ({ arGraph, selectedRuleId, selectedAtomId, onSelectRule, onSelectAtom }) => {
+  const [theme] = useTheme();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const cyRef = useRef<cytoscape.Core | null>(null);
 
@@ -26,6 +29,8 @@ export const ARGraphViewer: React.FC<ARGraphViewerProps> = ({ arGraph, selectedR
           label: node.label,
           type: node.type,
           details: node.details,
+          color: node.type === 'atom' ? colorFromName(node.label) : undefined,
+          fgColor: node.type === 'atom' ? foregroundForBackground(colorFromName(node.label)) : undefined,
         },
       })),
       ...arGraph.edges.map((edge, index) => ({
@@ -75,14 +80,21 @@ export const ARGraphViewer: React.FC<ARGraphViewerProps> = ({ arGraph, selectedR
           },
         },
         {
+          selector: 'node[type = "atom"][color]',
+          style: {
+            'background-color': 'data(color)',
+            color: 'data(fgColor)',
+          },
+        },
+        {
           selector: 'edge',
           style: {
             width: 2,
             'curve-style': 'bezier',
             'target-arrow-shape': 'triangle',
             'font-size': 9,
-            'line-color': '#94A3B8',
-            'target-arrow-color': '#94A3B8',
+            'line-color': theme === 'dark' ? '#9ca3af' : '#94A3B8',
+            'target-arrow-color': theme === 'dark' ? '#9ca3af' : '#94A3B8',
           },
         },
         {
@@ -140,7 +152,7 @@ export const ARGraphViewer: React.FC<ARGraphViewerProps> = ({ arGraph, selectedR
       cy.destroy();
       cyRef.current = null;
     };
-  }, [arGraph, onSelectRule]);
+  }, [arGraph, onSelectRule, theme]);
 
   useEffect(() => {
     const cy = cyRef.current;

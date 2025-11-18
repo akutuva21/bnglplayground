@@ -133,5 +133,6 @@ export const buildCompactRule = (rule: ReactionRule, displayName?: string): Comp
     context,
     operations,
     rate: String(rule.rate),
+    comment: rule.comment,
   };
 };

@@ -44,10 +44,16 @@ const describeOperation = (operation: RuleOperation): string => {
   }
 };
 
-const renderComponent = (component: VisualizationComponent): string => {
+const renderComponent = (component: VisualizationComponent): JSX.Element => {
   const state = component.state ? `~${component.state}` : '';
   const bond = component.bondLabel ? component.bondLabel : '';
-  return `${component.name}${state}${bond}`;
+  const reqGlyph = component.bondRequirement === 'bound' ? '🔗' : component.bondRequirement === 'free' ? '–' : component.bondRequirement === 'either' ? '?' : '';
+  return (
+    <span className="mr-1 inline-flex items-baseline gap-1">
+      <span className="font-medium">{component.name}{state}{bond}</span>
+      {reqGlyph && <span className="text-xs text-slate-400">{reqGlyph}</span>}
+    </span>
+  );
 };
 
 interface CompactRuleVisualizationProps {
@@ -88,6 +94,9 @@ export const CompactRuleVisualization: React.FC<CompactRuleVisualizationProps> =
           </div>
           <p className="text-[11px] leading-4 text-slate-600 dark:text-slate-300">{renderHumanSummary(classification)}</p>
         </div>
+      )}
+      {rule.context.length && rule.comment && (
+        <div className="mb-2 text-xs italic text-slate-500 dark:text-slate-400">{(rule as any).comment}</div>
       )}
       <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)]">
         <div>

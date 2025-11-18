@@ -1,4 +1,5 @@
 import React, { useEffect, useRef } from 'react';
+import { useTheme } from '../hooks/useTheme';
 import cytoscape from 'cytoscape';
 import dagre from 'cytoscape-dagre';
 import type { RuleFlowGraph } from '../types/visualization';
@@ -12,6 +13,7 @@ interface RuleFlowViewerProps {
 }
 
 export const RuleFlowViewer: React.FC<RuleFlowViewerProps> = ({ graph, selectedRuleId, onSelectRule }) => {
+  const [theme] = useTheme();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const cyRef = useRef<cytoscape.Core | null>(null);
 
@@ -27,6 +29,11 @@ export const RuleFlowViewer: React.FC<RuleFlowViewerProps> = ({ graph, selectedR
           label: node.displayName,
           type: node.type,
           layer: node.layer,
+          color: node.color,
+          fgColor: node.color ? (function hexToFg(hex:string){
+            // naive fg: black for bright, white for dark
+            return parseInt(hex.replace('#', ''), 16) > 0xffffff / 2 ? '#0f172a' : '#ffffff';
+          })(node.color) : undefined,
         },
       })),
       ...graph.edges.map((edge, index) => ({
@@ -58,12 +65,18 @@ export const RuleFlowViewer: React.FC<RuleFlowViewerProps> = ({ graph, selectedR
             shape: 'round-rectangle',
             width: 150,
             height: 46,
-            'background-color': '#334155',
-            color: '#ffffff',
+            // avoid mapping to data(color) here — use a presence selector below
             'border-width': 1,
             'border-color': '#0f172a',
           },
         },
+          {
+            selector: 'node[color]',
+            style: {
+              'background-color': 'data(color)',
+              color: 'data(fgColor)',
+            },
+          },
         {
           selector: 'node[type = "binding"]',
           style: { 'background-color': '#59A14F' },
@@ -88,11 +101,18 @@ export const RuleFlowViewer: React.FC<RuleFlowViewerProps> = ({ graph, selectedR
             'target-arrow-color': '#cbd5f5',
             'target-arrow-shape': 'triangle',
             'curve-style': 'bezier',
-            label: 'data(label)',
             'font-size': 9,
+            // label mapping is done only for edges that actually have a label
             'text-background-color': '#f8fafc',
             'text-background-opacity': 0.8,
             'text-background-padding': '2px',
+          },
+        },
+        {
+          selector: 'edge[label]'
+          ,
+          style: {
+            label: 'data(label)',
           },
         },
         {
@@ -129,7 +149,7 @@ export const RuleFlowViewer: React.FC<RuleFlowViewerProps> = ({ graph, selectedR
       cy.destroy();
       cyRef.current = null;
     };
-  }, [graph, onSelectRule]);
+  }, [graph, onSelectRule, theme]);
 
   useEffect(() => {
     const cy = cyRef.current;

@@ -5,8 +5,10 @@ import {
   parseSpeciesGraphs,
   snapshotComponentStates,
 } from './speciesGraphUtils';
+import { colorFromName } from './colorUtils';
 
 interface RuleFlowBuilderOptions {
+  getRuleColor?: (rule: ReactionRule, index: number) => string;
   getRuleId?: (rule: ReactionRule, index: number) => string;
   getRuleLabel?: (rule: ReactionRule, index: number) => string;
 }
@@ -124,6 +126,7 @@ const summarizeRule = (
   const reactantGraphs = parseSpeciesGraphs(rule.reactants);
   const productGraphs = parseSpeciesGraphs(rule.products);
 
+  const color = colorFromName(displayName);
   const producedSpecies = productGraphs.map((graph) => canonicalizeSpecies(graph.toString()));
   const consumedSpecies = reactantGraphs.map((graph) => canonicalizeSpecies(graph.toString()));
 
@@ -154,6 +157,7 @@ export const buildRuleFlowGraph = (
     displayName: summary.displayName,
     type: summary.nodeType,
     layer: summary.layer,
+    color: colorFromName(summary.displayName),
   }));
 
   const edges: RuleFlowEdge[] = [];
@@ -184,7 +188,6 @@ export const buildRuleFlowGraph = (
         return;
       }
       edgeKeySet.add(edgeKey);
-
       edges.push({
         from: sourceSummary.id,
         to: targetSummary.id,

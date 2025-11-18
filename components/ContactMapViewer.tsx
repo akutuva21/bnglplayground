@@ -1,6 +1,8 @@
 import React, { useEffect, useRef } from 'react';
+import { useTheme } from '../hooks/useTheme';
 import cytoscape from 'cytoscape';
 import type { ContactMap } from '../types/visualization';
+import { colorFromName, foregroundForBackground } from '../services/visualization/colorUtils';
 
 interface ContactMapViewerProps {
   contactMap: ContactMap;
@@ -15,6 +17,7 @@ const BASE_LAYOUT = {
 } as const;
 
 export const ContactMapViewer: React.FC<ContactMapViewerProps> = ({ contactMap, selectedRuleId, onSelectRule }) => {
+  const [theme] = useTheme();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const cyRef = useRef<cytoscape.Core | null>(null);
 
@@ -36,11 +39,54 @@ export const ContactMapViewer: React.FC<ContactMapViewerProps> = ({ contactMap, 
             'text-halign': 'center',
             'text-valign': 'center',
             'text-max-width': '70px',
-            'background-color': '#2563EB',
-            color: '#ffffff',
             'font-size': '12px',
-            width: 80,
-            height: 80,
+          },
+        },
+        {
+          selector: 'node[type = "molecule"]',
+          style: {
+            'background-color': '#f8fafc',
+            'border-color': '#64748b',
+            'border-width': 2,
+            'text-valign': 'top',
+            'text-halign': 'center',
+            label: 'data(label)',
+            shape: 'round-rectangle',
+            padding: '10px',
+            'font-size': 12,
+            'font-weight': '600',
+          },
+        },
+        {
+          selector: 'node[type = "compartment"]',
+          style: {
+            'background-color': '#eef2ff',
+            'border-color': '#6366f1',
+            'border-width': 2,
+            'text-valign': 'top',
+            'text-halign': 'center',
+            label: 'data(label)',
+            shape: 'round-rectangle',
+            padding: '12px',
+            'font-size': 13,
+            'font-weight': '700',
+          },
+        },
+        {
+          selector: 'node[type = "component"]',
+          style: {
+            'background-color': '#fbbf24',
+            width: 20,
+            height: 20,
+            label: 'data(label)',
+            'font-size': 10,
+          },
+        },
+        {
+          selector: 'node[color]',
+          style: {
+            'background-color': 'data(color)',
+            color: 'data(fgColor)',
           },
         },
         {
@@ -48,12 +94,18 @@ export const ContactMapViewer: React.FC<ContactMapViewerProps> = ({ contactMap, 
           style: {
             width: 3,
             'curve-style': 'bezier',
-            'line-color': '#94A3B8',
-            'target-arrow-color': '#94A3B8',
+            'line-color': theme === 'dark' ? '#94A3B8' : '#94A3B8',
+            'target-arrow-color': theme === 'dark' ? '#94A3B8' : '#94A3B8',
             'target-arrow-shape': 'triangle',
+            // edge labels are handled below for edges that have a label
+          },
+        },
+        {
+          selector: 'edge[label]',
+          style: {
             label: 'data(label)',
-            'font-size': '10px',
             'text-rotation': 'autorotate',
+            'font-size': '10px',
           },
         },
         {
@@ -90,7 +142,7 @@ export const ContactMapViewer: React.FC<ContactMapViewerProps> = ({ contactMap, 
       cyRef.current?.destroy();
       cyRef.current = null;
     };
-  }, []);
+  }, [theme]);
 
   // Refresh tap handlers whenever the callback changes
   useEffect(() => {
@@ -118,13 +170,19 @@ export const ContactMapViewer: React.FC<ContactMapViewerProps> = ({ contactMap, 
 
     const elements = [
       ...contactMap.nodes.map((node) => ({
-        data: { id: node, label: node },
+        data: {
+          id: node.id,
+          label: node.label,
+          parent: node.parent,
+          type: node.type,
+          color: node.type === 'molecule' ? colorFromName(node.label) : '#fbbf24',
+          fgColor: node.type === 'molecule' ? foregroundForBackground(colorFromName(node.label)) : '#0f172a',
+        },
       })),
       ...contactMap.edges.map((edge, index) => ({
         data: {
           id: `edge-${index}`,
           source: edge.from,
-          target: edge.to,
           label: edge.componentPair ? `${edge.componentPair[0]}-${edge.componentPair[1]}` : '',
           type: edge.interactionType,
           ruleIds: edge.ruleIds,

@@ -781,6 +781,7 @@ class VF2State {
     score += comp.edges.size * 10;
     if (comp.wildcard === '+') score += 5;
     if (comp.wildcard === '?') score += 1;
+    if (comp.wildcard === '-') score += 4;
     if (!comp.wildcard && comp.edges.size === 0) score += 2;
     if (comp.state && comp.state !== '?') score += 3;
     return score;
@@ -838,6 +839,10 @@ class VF2State {
 
     if (pComp.wildcard === '?') {
       return true;
+    }
+
+    if (pComp.wildcard === '-') {
+      return !targetBound;
     }
 
     if (hasSpecificBond) {

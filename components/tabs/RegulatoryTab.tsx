@@ -150,6 +150,7 @@ export const RegulatoryTab: React.FC<RegulatoryTabProps> = ({ model, results, se
 
   const selectedRuleImpact = selectedRuleId && insights ? insights.ruleImpacts[selectedRuleId] : null;
   const selectedRuleClassification = selectedRuleId ? ruleClassifications[selectedRuleId] : null;
+  const selectedRuleComment = selectedRuleId && model ? model.reactionRules.find((r, i) => getRuleId(r, i) === selectedRuleId)?.comment : null;
   const selectedAtomMeta = selectedAtomId && insights ? insights.atomMetadata[selectedAtomId] : null;
   const atomSpecies = selectedAtomId && insights ? insights.atomToSpecies[selectedAtomId] ?? [] : [];
   const atomUsage = selectedAtomId && insights ? insights.atomRuleUsage[selectedAtomId] : undefined;
@@ -203,6 +204,9 @@ export const RegulatoryTab: React.FC<RegulatoryTabProps> = ({ model, results, se
                   {renderHumanSummary(selectedRuleClassification)}
                 </p>
               </div>
+            )}
+            {selectedRuleComment && (
+              <div className="mt-2 text-xs italic text-slate-500 dark:text-slate-400">{selectedRuleComment}</div>
             )}
           </div>
           <div className="inline-flex rounded-lg border border-slate-200 bg-slate-100 p-1 text-xs font-medium dark:border-slate-700 dark:bg-slate-800">

@@ -43,4 +43,36 @@ export class RxnRule {
     const productStr = this.products.map(p => p.toString()).join(' + ');
     return `${reactantStr} -> ${productStr} ${this.rateConstant}`;
   }
+
+  /**
+   * Returns true when this rule appears to transport molecules between compartments
+   * (e.g., A@cyto -> A@nuc). This is a heuristic used to detect possible transport rules.
+   */
+  isTransportRule(): boolean {
+    const reactantCompartments = new Map<string, Set<string>>();
+    const productCompartments = new Map<string, Set<string>>();
+
+    for (const r of this.reactants) {
+      for (const mol of r.molecules) {
+        if (!reactantCompartments.has(mol.name)) reactantCompartments.set(mol.name, new Set());
+        reactantCompartments.get(mol.name)!.add(mol.compartment ?? 'default');
+      }
+    }
+    for (const p of this.products) {
+      for (const mol of p.molecules) {
+        if (!productCompartments.has(mol.name)) productCompartments.set(mol.name, new Set());
+        productCompartments.get(mol.name)!.add(mol.compartment ?? 'default');
+      }
+    }
+
+    for (const [name, rComps] of reactantCompartments.entries()) {
+      const pComps = productCompartments.get(name);
+      if (!pComps) continue;
+      // If reactant and product compartments are disjoint or different sets, consider transport
+      const all = new Set([...rComps, ...pComps]);
+      if (all.size > rComps.size || all.size > pComps.size) return true;
+    }
+
+    return false;
+  }
 }

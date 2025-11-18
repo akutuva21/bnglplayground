@@ -42,6 +42,13 @@ const cleanLine = (line: string) => {
   return line.replace(/#.*$/, '').trim();
 };
 
+const extractInlineComment = (line: string) => {
+  if (typeof line !== 'string') return undefined;
+  const m = line.match(/#(.*)$/);
+  if (!m) return undefined;
+  return m[1].trim();
+};
+
 const parseEntityList = (segment: string) => {
   const parts: string[] = [];
   let current = '';
@@ -121,6 +128,7 @@ export function parseBNGL(code: string, options: ParseBNGLOptions = {}): BNGLMod
       console.log(...args);
     }
   };
+  // compartments are parsed later once model is constructed
   const maybeCancel = () => {
     if (checkCancelled) {
       checkCancelled();
@@ -186,15 +194,15 @@ export function parseBNGL(code: string, options: ParseBNGLOptions = {}): BNGLMod
     for (const line of molTypesContent.split(/\r?\n/)) {
       maybeCancel();
       const cleaned = cleanLine(line);
-      if (cleaned) {
+        if (cleaned) {
         const match = cleaned.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?:\(([^)]*)\))?\s*$/);
         if (match) {
           const name = match[1];
           const componentsStr = match[2] || '';
           const components = componentsStr ? componentsStr.split(',').map((c) => c.trim()).filter(Boolean) : [];
-          model.moleculeTypes.push({ name, components });
+          model.moleculeTypes.push({ name, components, comment: extractInlineComment(line) });
         } else {
-          model.moleculeTypes.push({ name: cleaned, components: [] });
+          model.moleculeTypes.push({ name: cleaned, components: [], comment: extractInlineComment(line) });
         }
       }
     }
@@ -212,18 +220,20 @@ export function parseBNGL(code: string, options: ParseBNGLOptions = {}): BNGLMod
           .map((m) => completeSpeciesName(m.trim()))
           .join('.');
       }
-      const mm = partial.match(/^([A-Za-z0-9_]+)(\(([^)]*)\))?$/);
+      // allow optional @Compartment suffix after molecule or after parentheses
+      const mm = partial.match(/^([A-Za-z0-9_]+)(\(([^)]*)\))?(?:@([A-Za-z0-9_]+))?$/);
       if (!mm) return partial;
       const name = mm[1];
       const specified = (mm[3] || '').trim();
-      if (specified) return `${name}(${specified})`;
+      const compartment = mm[4];
+      if (specified) return `${name}(${specified})${compartment ? `@${compartment}` : ''}`;
       const mt = model.moleculeTypes.find((m) => m.name === name);
       if (!mt) return partial;
       const comps = mt.components.map((c) => {
         const [base, ...states] = c.split('~');
         return states.length ? `${base}~${states[0]}` : base;
       });
-      return `${name}(${comps.join(',')})`;
+      return `${name}(${comps.join(',')})${compartment ? `@${compartment}` : ''}`;
     };
 
     for (const [s, amt] of seedSpeciesMap.entries()) {
@@ -234,15 +244,38 @@ export function parseBNGL(code: string, options: ParseBNGLOptions = {}): BNGLMod
     }
   }
 
+  // Now we can parse compartments once the model has been created and helper functions are available
+  const compartmentsContent = getBlockContent('compartments', code);
+  if (compartmentsContent) {
+    model.compartments = [];
+    for (const rawLine of compartmentsContent.split(/\r?\n/)) {
+      maybeCancel();
+      const cleaned = cleanLine(rawLine);
+      if (!cleaned) continue;
+      const parts = cleaned.split(/\s+/).filter(Boolean);
+      // Expect at least name dim size
+      if (parts.length >= 3) {
+        const name = parts[0];
+        const dimension = parseInt(parts[1], 10) || 3;
+        // size may be a parameter name; try to parse float, otherwise 1.0
+        const rawSize = parts[2];
+        const sizeVal = parseFloat(rawSize);
+        const size = Number.isNaN(sizeVal) ? 1.0 : sizeVal;
+        const parent = parts[3];
+        model.compartments.push({ name, dimension, size, parent });
+      }
+    }
+  }
+
   const observablesContent = getBlockContent('observables', code);
   if (observablesContent) {
     for (const line of observablesContent.split(/\r?\n/)) {
       maybeCancel();
       const cleaned = cleanLine(line);
-      if (cleaned) {
+        if (cleaned) {
         const parts = cleaned.split(/\s+/);
         if (parts.length >= 3 && (parts[0].toLowerCase() === 'molecules' || parts[0].toLowerCase() === 'species')) {
-          model.observables.push({ type: parts[0].toLowerCase() as 'molecules' | 'species', name: parts[1], pattern: parts.slice(2).join(' ') });
+          model.observables.push({ type: parts[0].toLowerCase() as 'molecules' | 'species', name: parts[1], pattern: parts.slice(2).join(' '), comment: extractInlineComment(line) });
         }
       }
     }
@@ -333,6 +366,7 @@ export function parseBNGL(code: string, options: ParseBNGLOptions = {}): BNGLMod
         rate: forwardRateLabel,
         isBidirectional,
         reverseRate: isBidirectional ? reverseRateLabel : undefined,
+        comment: extractInlineComment(statement),
       });
     });
   }

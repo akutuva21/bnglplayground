@@ -26,15 +26,12 @@ export class Molecule {
    */
   toString(): string {
     const compStr = this.components.map(c => c.toString()).join(',');
-    if (compStr) {
-      return `${this.name}(${compStr})`;
+    const compSuffix = compStr ? `(${compStr})` : (this.hasExplicitEmptyComponentList ? '()' : '');
+    const compartmentSuffix = this.compartment ? `@${this.compartment}` : '';
+    if (compStr || this.hasExplicitEmptyComponentList) {
+      return `${this.name}${compSuffix}${compartmentSuffix}`;
     }
-
-    if (this.hasExplicitEmptyComponentList) {
-      return `${this.name}()`;
-    }
-
-    return this.name;
+    return `${this.name}${compartmentSuffix}`;
   }
 
   /**

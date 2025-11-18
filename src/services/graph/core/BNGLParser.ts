@@ -54,7 +54,8 @@ export class BNGLParser {
    * Example: "A(b!1,c~P)" -> Molecule with name A, components b (bonded) and c (phosphorylated)
    */
   static parseMolecule(molStr: string): Molecule {
-    const match = molStr.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?:\(([^)]*)\))?\s*$/);
+    // Matches: Name(components)@Compartment or Name@Compartment or Name(components)
+    const match = molStr.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?:\(([^)]*)\))?(?:@([A-Za-z0-9_]+))?\s*$/);
     if (!match) {
       // Molecule without components, e.g., "A"
       return new Molecule(molStr, []);
@@ -62,9 +63,10 @@ export class BNGLParser {
 
     const name = match[1];
     const componentStr = match[2] || '';
+    const compartment = match[3];
 
     if (!componentStr.trim()) {
-      return new Molecule(name, [], undefined, true);
+      return new Molecule(name, [], compartment, true);
     }
 
     const components: Component[] = [];
@@ -75,7 +77,7 @@ export class BNGLParser {
       components.push(component);
     }
 
-    return new Molecule(name, components);
+    return new Molecule(name, components, compartment);
   }
 
   /**
@@ -92,7 +94,7 @@ export class BNGLParser {
     const component = new Component(name, states);
     if (states.length > 0) component.state = states[0];
     if (bondPart) {
-      if (bondPart === '+' || bondPart === '?') {
+      if (bondPart === '+' || bondPart === '?' || bondPart === '-') {
         component.wildcard = bondPart;
       } else {
         const bond = parseInt(bondPart);

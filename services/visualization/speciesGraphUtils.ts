@@ -4,6 +4,7 @@ import type {
   VisualizationComponent,
   VisualizationMolecule,
 } from '../../types/visualization';
+import { colorFromName, foregroundForBackground } from './colorUtils';
 
 export interface BondInfo {
   key: string;
@@ -39,6 +40,25 @@ export const buildVisualizationMolecule = (
       visualComponent.state = component.state;
     }
 
+    // translate BNGL wildcard bond hints into a UI-friendly bond requirement
+    if (component.wildcard) {
+      switch (component.wildcard) {
+        case '+':
+          visualComponent.bondRequirement = 'bound';
+          break;
+        case '?':
+          visualComponent.bondRequirement = 'either';
+          break;
+        case '-':
+          visualComponent.bondRequirement = 'free';
+          break;
+        default:
+          visualComponent.bondRequirement = null;
+      }
+    } else {
+      visualComponent.bondRequirement = null;
+    }
+
     const bonds = Array.from(component.edges.entries());
     if (bonds.length > 0) {
       const partnerKey = graph.adjacency.get(`${molIdx}.${compIdx}`);
@@ -62,10 +82,17 @@ export const buildVisualizationMolecule = (
     return visualComponent;
   });
 
-  return {
-    name: molecule.name,
-    components,
-  };
+    // set a molecule color and derive text color for good contrast
+    const color = colorFromName(molecule.name);
+    const fg = foregroundForBackground(color);
+
+    return {
+      name: molecule.name,
+      components,
+      color,
+      // expose a human readable text color so svg/cytoscape can pick readable labels
+      textColor: fg,
+    } as VisualizationMolecule & { textColor?: string };
 };
 
 export const convertSpeciesGraph = (graph: SpeciesGraph): VisualizationMolecule[] => {
