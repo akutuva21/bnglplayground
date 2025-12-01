@@ -41,6 +41,12 @@ interface EditorPanelProps {
   modelExists: boolean;
   validationWarnings: ValidationWarning[];
   editorMarkers: EditorMarker[];
+  selection?: {
+    startLineNumber: number;
+    endLineNumber: number;
+    startColumn?: number;
+    endColumn?: number;
+  };
 }
 
 type ParsedSimulateOptions = {
@@ -114,6 +120,7 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
   modelExists,
   validationWarnings,
   editorMarkers,
+  selection,
 }) => {
   const [isGalleryOpen, setIsGalleryOpen] = useState(false);
   // removed first-time-open example gallery state
@@ -137,7 +144,7 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
     onCodeChange(exampleCode);
     setIsGalleryOpen(false);
   };
-  
+
   return (
     <Card className="flex h-full min-h-0 flex-col overflow-hidden">
       <div className="flex flex-col gap-3 flex-1 min-h-0 overflow-y-auto pr-1">
@@ -148,7 +155,7 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
             <strong>Welcome!</strong>
             <ul className="list-disc pl-5 mt-2">
               <li>Write or load a BNGL model in the editor.</li>
-              <li>Click <strong>Examples</strong> to load a starter model, then click <strong>Run Simulation</strong>.</li>
+              <li>Click <strong>Models</strong> to load a starter model, then click <strong>Run Simulation</strong>.</li>
               <li>Explore the Regulatory Graph and Identifiability tabs to analyze your model.</li>
             </ul>
             <button
@@ -181,6 +188,7 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
             value={code}
             onChange={(value) => onCodeChange(value || '')}
             markers={editorMarkers}
+            selection={selection}
           />
         </div>
         {validationWarnings.length > 0 && (
@@ -220,62 +228,62 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
         )}
       </div>
       <div className="mt-4 flex flex-wrap items-center justify-between gap-2 shrink-0 border-t border-slate-200 pt-3 dark:border-slate-700">
-         <div className="flex flex-wrap gap-2">
-            <Button onClick={() => setIsGalleryOpen(true)}>
-              Examples
-            </Button>
-                    <Button variant="subtle" onClick={() => fileInputRef.current?.click()}>
-              <UploadIcon className="w-4 h-4 mr-2" />
-              Load BNGL
-            </Button>
-                    <Button variant="subtle" onClick={() => onCodeChange(formatBNGLMini(code))}>
-                      Format / Tidy BNGL
-                    </Button>
-            <input
-              type="file"
-              ref={fileInputRef}
-              onChange={handleFileChange}
-              className="hidden"
-              accept=".bngl"
+        <div className="flex flex-wrap gap-2">
+          <Button onClick={() => setIsGalleryOpen(true)}>
+            Models
+          </Button>
+          <Button variant="subtle" onClick={() => fileInputRef.current?.click()}>
+            <UploadIcon className="w-4 h-4 mr-2" />
+            Load BNGL
+          </Button>
+          <Button variant="subtle" onClick={() => onCodeChange(formatBNGLMini(code))}>
+            Format / Tidy BNGL
+          </Button>
+          <input
+            type="file"
+            ref={fileInputRef}
+            onChange={handleFileChange}
+            className="hidden"
+            accept=".bngl"
+          />
+        </div>
+        <div className="flex flex-wrap gap-2 items-center">
+          <Button onClick={onParse}>Parse Model</Button>
+          <div className="flex items-center gap-3 pl-2 border-l border-stone-300 dark:border-slate-600">
+            <RadioGroup
+              name="simulationMethod"
+              value={simulationMethod}
+              onChange={(val) => setSimulationMethod(val as 'ode' | 'ssa')}
+              options={[
+                { label: 'ODE', value: 'ode' },
+                { label: 'SSA', value: 'ssa' },
+              ]}
             />
-         </div>
-         <div className="flex flex-wrap gap-2 items-center">
-            <Button onClick={onParse}>Parse Model</Button>
-            <div className="flex items-center gap-3 pl-2 border-l border-stone-300 dark:border-slate-600">
-                <RadioGroup
-                    name="simulationMethod"
-                    value={simulationMethod}
-                    onChange={(val) => setSimulationMethod(val as 'ode' | 'ssa')}
-                    options={[
-                        { label: 'ODE', value: 'ode' },
-                        { label: 'SSA', value: 'ssa' },
-                    ]}
-                />
-                <Button
-                  onClick={() => {
-                    const parsed = extractSimulateOptions(code, simulationMethod);
-                    const defaults = DEFAULT_SIMULATION[simulationMethod];
-                    onSimulate({
-                      method: simulationMethod,
-                      t_end: parsed.t_end ?? defaults.t_end,
-                      n_steps: parsed.n_steps ?? defaults.n_steps,
-                    });
-                  }}
-                  disabled={isSimulating || !modelExists}
-                  variant="primary"
-                >
-                  {isSimulating && <LoadingSpinner className="w-4 h-4 mr-2" />}
-                  {isSimulating ? 'Simulating...' : 'Run Simulation'}
-                </Button>
-                {isSimulating && (
-                  <Button variant="danger" onClick={onCancelSimulation}>
-                    Cancel
-                  </Button>
-                )}
-            </div>
+            <Button
+              onClick={() => {
+                const parsed = extractSimulateOptions(code, simulationMethod);
+                const defaults = DEFAULT_SIMULATION[simulationMethod];
+                onSimulate({
+                  method: simulationMethod,
+                  t_end: parsed.t_end ?? defaults.t_end,
+                  n_steps: parsed.n_steps ?? defaults.n_steps,
+                });
+              }}
+              disabled={isSimulating || !modelExists}
+              variant="primary"
+            >
+              {isSimulating && <LoadingSpinner className="w-4 h-4 mr-2" />}
+              {isSimulating ? 'Simulating...' : 'Run Simulation'}
+            </Button>
+            {isSimulating && (
+              <Button variant="danger" onClick={onCancelSimulation}>
+                Cancel
+              </Button>
+            )}
+          </div>
         </div>
       </div>
-       <ExampleGalleryModal
+      <ExampleGalleryModal
         isOpen={isGalleryOpen}
         onClose={() => setIsGalleryOpen(false)}
         onSelect={handleLoadExample}

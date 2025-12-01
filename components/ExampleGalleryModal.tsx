@@ -3,7 +3,7 @@ import { Modal } from './ui/Modal';
 import { Card } from './ui/Card';
 import { Input } from './ui/Input';
 import { SearchIcon } from './icons/SearchIcon';
-import { EXAMPLES } from '../constants';
+import { MODEL_CATEGORIES } from '../constants';
 
 interface ExampleGalleryModalProps {
   isOpen: boolean;
@@ -11,33 +11,27 @@ interface ExampleGalleryModalProps {
   onSelect: (code: string) => void;
 }
 
-const tagCounts: Record<string, number> = EXAMPLES.reduce((acc, example) => {
-  example.tags.forEach((tag) => {
-    acc[tag] = (acc[tag] ?? 0) + 1;
-  });
-  return acc;
-}, {} as Record<string, number>);
-
-const visibleTags = [...new Set(EXAMPLES.flatMap(ex => ex.tags))]
-  .filter((tag) => (tagCounts[tag] ?? 0) > 2)
-  .sort((a, b) => a.localeCompare(b));
-
 export const ExampleGalleryModal: React.FC<ExampleGalleryModalProps> = ({ isOpen, onClose, onSelect }) => {
   const [searchTerm, setSearchTerm] = useState('');
-  const [selectedTags, setSelectedTags] = useState<Set<string>>(new Set());
+  const [selectedCategory, setSelectedCategory] = useState<string>(MODEL_CATEGORIES[0]?.id || '');
   const [focusedExample, setFocusedExample] = useState<string | null>(null);
 
+  const currentCategory = useMemo(() => {
+    return MODEL_CATEGORIES.find(cat => cat.id === selectedCategory) || MODEL_CATEGORIES[0];
+  }, [selectedCategory]);
+
   const filteredExamples = useMemo(() => {
-    return EXAMPLES.filter(example => {
+    if (!currentCategory) return [];
+    
+    if (!searchTerm) return currentCategory.models;
+    
+    return currentCategory.models.filter(example => {
       const searchMatch =
         example.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
         example.description.toLowerCase().includes(searchTerm.toLowerCase());
-      
-      const tagMatch = selectedTags.size === 0 || [...selectedTags].every(tag => example.tags.includes(tag));
-      
-      return searchMatch && tagMatch;
+      return searchMatch;
     });
-  }, [searchTerm, selectedTags]);
+  }, [searchTerm, currentCategory]);
 
   React.useEffect(() => {
     if (!isOpen) {
@@ -45,62 +39,54 @@ export const ExampleGalleryModal: React.FC<ExampleGalleryModalProps> = ({ isOpen
       return;
     }
     setSearchTerm('');
-    setSelectedTags(new Set());
+    setSelectedCategory(MODEL_CATEGORIES[0]?.id || '');
   }, [isOpen]);
-  
-  const handleTagClick = (tag: string) => {
-      const newTags = new Set(selectedTags);
-      if (newTags.has(tag)) {
-          newTags.delete(tag);
-      } else {
-          newTags.add(tag);
-      }
-      setSelectedTags(newTags);
-  }
-
-  const handleClearFilters = () => {
-    setSearchTerm('');
-    setSelectedTags(new Set());
-  };
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="Example Model Gallery" size="3xl">
+    <Modal isOpen={isOpen} onClose={onClose} title="Published BNGL Models" size="3xl">
       <div className="mt-4">
-        <p className="text-sm text-slate-600 dark:text-slate-300">Tip: start with “Simple Dimerization” or “Michaelis-Menten” if you are new to BNGL.</p>
-        <div className="flex flex-col md:flex-row gap-4 mb-4">
-          <div className="relative flex-grow">
-            <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
-            <Input 
-              type="text" 
-              placeholder="Search examples..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="pl-10"
-            />
-          </div>
+        <p className="text-sm text-slate-600 dark:text-slate-300 mb-4">
+          Browse {MODEL_CATEGORIES.reduce((sum, cat) => sum + cat.models.length, 0)} published and tutorial models from the BioNetGen community.
+        </p>
+        
+        {/* Search */}
+        <div className="relative mb-4">
+          <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+          <Input 
+            type="text" 
+            placeholder="Search models..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="pl-10"
+          />
         </div>
-            <div className="flex flex-wrap gap-2 mb-6 border-b border-stone-200 dark:border-slate-700 pb-4">
-            {visibleTags.map(tag => (
-                <button 
-                  key={tag}
-                  onClick={() => handleTagClick(tag)}
-                  className={`px-3 py-1 text-xs font-medium rounded-full transition-colors ${
-                      selectedTags.has(tag) 
-                      ? 'bg-primary text-white' 
-                      : 'bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-300 dark:hover:bg-slate-600'
-                  }`}
-                >
-                    {tag}
-                </button>
-            ))}
-            <button
-              onClick={handleClearFilters}
-              className="ml-auto px-3 py-1 text-xs font-medium rounded-full border border-slate-300 text-slate-700 dark:border-slate-600 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700"
+
+        {/* Category Tabs */}
+        <div className="flex flex-wrap gap-2 mb-6 border-b border-stone-200 dark:border-slate-700 pb-4">
+          {MODEL_CATEGORIES.map(category => (
+            <button 
+              key={category.id}
+              onClick={() => setSelectedCategory(category.id)}
+              className={`px-4 py-2 text-sm font-medium rounded-t-md transition-colors ${
+                selectedCategory === category.id
+                  ? 'bg-primary text-white' 
+                  : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700'
+              }`}
             >
-              Clear filters
+              {category.name} ({category.models.length})
             </button>
+          ))}
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 max-h-[75vh] overflow-y-auto pr-2">
+
+        {/* Category Description */}
+        {currentCategory && (
+          <p className="text-sm text-slate-600 dark:text-slate-400 mb-4 italic">
+            {currentCategory.description}
+          </p>
+        )}
+
+        {/* Model Grid */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 max-h-[60vh] overflow-y-auto pr-2">
           {filteredExamples.length > 0 ? filteredExamples.map(example => (
             <Card key={example.id} className="flex flex-col">
               <div className="flex items-center justify-between">
@@ -112,27 +98,27 @@ export const ExampleGalleryModal: React.FC<ExampleGalleryModalProps> = ({ isOpen
               </div>
               <div className="flex-grow">
                 <h3 className="font-semibold text-slate-800 dark:text-slate-100">{example.name}</h3>
-                <p className="text-sm text-slate-600 dark:text-slate-300 mt-1">{example.description}</p>
-                <div className="flex flex-wrap gap-1 mt-3">
-                  {example.tags.filter((tag) => visibleTags.includes(tag)).map(tag => (
-                    <span key={tag} className="px-2 py-0.5 text-xs bg-primary-100 dark:bg-primary-900/50 text-primary-800 dark:text-primary-300 rounded-full">{tag}</span>
+                <p className="text-xs text-slate-600 dark:text-slate-300 mt-1 line-clamp-2">{example.description}</p>
+                <div className="flex flex-wrap gap-1 mt-2">
+                  {example.tags?.slice(0, 2).map(tag => (
+                    <span key={tag} className="px-2 py-0.5 text-xs bg-primary-100 dark:bg-primary-900/50 text-primary-800 dark:text-primary-300 rounded-full">
+                      {tag}
+                    </span>
                   ))}
                 </div>
               </div>
-                <button 
+              <button 
                 onClick={() => onSelect(example.code)}
-                className="mt-4 w-full text-center px-4 py-2 text-sm font-semibold bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 rounded-md transition-colors text-slate-800 dark:text-slate-100"
+                className="mt-3 w-full text-center px-4 py-2 text-sm font-semibold bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 rounded-md transition-colors text-slate-800 dark:text-slate-100"
               >
-                Load Example
+                Load Model
               </button>
             </Card>
           )) : (
-              <p className="text-slate-500 dark:text-slate-400 col-span-full text-center">No examples match your criteria.</p>
+            <p className="text-slate-500 dark:text-slate-400 col-span-full text-center">No models match your search.</p>
           )}
         </div>
       </div>
     </Modal>
   );
 };
-
-

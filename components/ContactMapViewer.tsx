@@ -1,7 +1,10 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useTheme } from '../hooks/useTheme';
 import cytoscape from 'cytoscape';
 import type { ContactMap } from '../types/visualization';
+import { Button } from './ui/Button';
+
+import { LoadingSpinner } from './ui/LoadingSpinner';
 import { colorFromName, foregroundForBackground } from '../services/visualization/colorUtils';
 
 interface ContactMapViewerProps {
@@ -18,6 +21,7 @@ const BASE_LAYOUT = {
 
 export const ContactMapViewer: React.FC<ContactMapViewerProps> = ({ contactMap, selectedRuleId, onSelectRule }) => {
   const [theme] = useTheme();
+  const [isLayoutRunning, setIsLayoutRunning] = useState(false);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const cyRef = useRef<cytoscape.Core | null>(null);
 
@@ -48,13 +52,22 @@ export const ContactMapViewer: React.FC<ContactMapViewerProps> = ({ contactMap, 
             'background-color': '#f8fafc',
             'border-color': '#64748b',
             'border-width': 2,
-            'text-valign': 'top',
+            'text-valign': 'center',
             'text-halign': 'center',
             label: 'data(label)',
             shape: 'round-rectangle',
             padding: '10px',
+            'compound-sizing-wrt-labels': 'include',
+            'min-width': (ele: any) => Math.max(40, (ele.data('label') || '').length * 8 + 20),
             'font-size': 12,
-            'font-weight': '600',
+            'font-weight': 600,
+          },
+        },
+        {
+          selector: 'node[type = "molecule"]:childless',
+          style: {
+            width: (ele: any) => Math.max(40, (ele.data('label') || '').length * 8 + 20),
+            height: 35,
           },
         },
         {
@@ -69,7 +82,7 @@ export const ContactMapViewer: React.FC<ContactMapViewerProps> = ({ contactMap, 
             shape: 'round-rectangle',
             padding: '12px',
             'font-size': 13,
-            'font-weight': '700',
+            'font-weight': 700,
           },
         },
         {
@@ -106,6 +119,10 @@ export const ContactMapViewer: React.FC<ContactMapViewerProps> = ({ contactMap, 
             label: 'data(label)',
             'text-rotation': 'autorotate',
             'font-size': '10px',
+            'text-background-color': '#ffffff',
+            'text-background-opacity': 0.8,
+            'text-background-padding': '2px',
+            'text-background-shape': 'round-rectangle',
           },
         },
         {
@@ -199,6 +216,68 @@ export const ContactMapViewer: React.FC<ContactMapViewerProps> = ({ contactMap, 
     cy.layout({ ...BASE_LAYOUT }).run();
   }, [contactMap]);
 
+  const runLayout = async () => {
+    const cy = cyRef.current;
+    if (!cy) return;
+
+    setIsLayoutRunning(true);
+    let useFcose = false;
+    try {
+      // Try dynamic import of cytoscape-fcose (optional); if present, register it
+      // @ts-ignore - optional dependency, types may not exist
+      const fcose = await import('cytoscape-fcose');
+      const plugin = (fcose as any).default ?? fcose;
+      if (plugin) cytoscape.use(plugin);
+      useFcose = true;
+    } catch (e) {
+      // ignore if fcose is not installed
+      // eslint-disable-next-line no-console
+      console.debug('fcose not found; falling back to cose layout');
+      useFcose = false;
+    }
+
+    try {
+      const layout = cy.layout({
+        name: useFcose ? 'fcose' : 'cose',
+        animate: true,
+        randomize: false,
+        fit: true,
+        padding: 30,
+        nodeDimensionsIncludeLabels: true,
+        tile: true,
+      } as any);
+      layout.run();
+      layout.on('layoutstop', () => setIsLayoutRunning(false));
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('Layout failed', err);
+      setIsLayoutRunning(false);
+    }
+  };
+
+  const handleFit = () => {
+    const cy = cyRef.current;
+    if (!cy) return;
+    cy.fit(undefined, 30);
+  };
+
+  const handleExportPNG = () => {
+    const cy = cyRef.current;
+    if (!cy) return;
+    try {
+      const blob = cy.png({ output: 'blob', scale: 2, full: true }) as Blob;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'contact_map.png';
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('Export PNG failed', err);
+    }
+  };
+
   useEffect(() => {
     const cy = cyRef.current;
     if (!cy) {
@@ -215,9 +294,89 @@ export const ContactMapViewer: React.FC<ContactMapViewerProps> = ({ contactMap, 
       if (ruleIds && ruleIds.includes(selectedRuleId)) {
         edge.addClass('highlighted');
         edge.connectedNodes().addClass('highlighted');
+        edge.connectedNodes().parents().addClass('highlighted');
       }
     });
   }, [selectedRuleId, contactMap]);
 
-  return <div ref={containerRef} className="h-96 w-full rounded-lg border border-stone-200 bg-white dark:border-slate-700 dark:bg-slate-900" />;
+  return (
+    <div className="flex flex-col h-full gap-2">
+      <div className="relative flex-1 min-h-[500px] w-full rounded-lg border border-stone-200 bg-white dark:border-slate-700 dark:bg-slate-900 overflow-hidden">
+      <div ref={containerRef} className="absolute inset-0 z-0" />
+
+      {/* Toolbar */}
+      <div className="absolute top-4 right-4 z-10 flex flex-col gap-2">
+        <div className="flex gap-2 bg-white/90 dark:bg-slate-800/90 p-1.5 rounded-md shadow-sm border border-slate-200 dark:border-slate-700 backdrop-blur-sm">
+          <Button variant="subtle" onClick={handleFit} className="text-xs h-8 px-3">Fit View</Button>
+          <Button variant="subtle" onClick={() => runLayout()} disabled={isLayoutRunning} className="text-xs h-8 px-3">
+            {isLayoutRunning ? <LoadingSpinner className="w-4 h-4" /> : 'Re-Layout'}
+          </Button>
+          <Button variant="primary" onClick={handleExportPNG} className="text-xs h-8 px-3">Export PNG</Button>
+          <Button variant="subtle" onClick={async () => {
+            // Try to export SVG; fall back to PNG if unsupported
+            const cy = cyRef.current;
+            if (!cy) return;
+
+            try {
+              // eslint-disable-next-line @typescript-eslint/no-var-requires
+              // @ts-ignore optional dependency
+              const cySvg = await import('cytoscape-svg');
+              const plugin = (cySvg as any).default ?? cySvg;
+              if (plugin) cytoscape.use(plugin);
+              // @ts-ignore - extension introduces svg() method
+              const svgContent: string = cy.svg({ scale: 1, full: true });
+              const blob = new Blob([svgContent], { type: 'image/svg+xml;charset=utf-8' });
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement('a');
+              a.href = url;
+              a.download = 'contact_map.svg';
+              a.click();
+              URL.revokeObjectURL(url);
+              return;
+            } catch (svgErr) {
+              // fallback to PNG
+              try {
+                const blob = cy.png({ output: 'blob', scale: 2, full: true }) as Blob;
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'contact_map.png';
+                a.click();
+                URL.revokeObjectURL(url);
+                return;
+              } catch (pngErr) {
+                // eslint-disable-next-line no-console
+                console.error('Export failed:', svgErr, pngErr);
+              }
+            }
+          }} className="text-xs h-8 px-3">Export SVG</Button>
+        </div>
+      </div>
+
+      </div>
+
+      {/* Legend Box */}
+      <div className="flex items-center gap-4 bg-white dark:bg-slate-900 p-2 rounded-md border border-slate-200 dark:border-slate-700 mt-2">
+        <h4 className="text-xs font-semibold text-slate-500 uppercase">Legend</h4>
+        <div className="flex items-center gap-4 text-xs">
+          <div className="flex items-center gap-2">
+            <div className="w-3 h-3 rounded bg-slate-100 border border-slate-400" />
+            <span className="text-slate-700 dark:text-slate-300">Molecule</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="w-3 h-3 rounded-full bg-amber-400 border border-amber-600" />
+            <span className="text-slate-700 dark:text-slate-300">Component / Site</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="w-6 h-0 border-t-2 border-slate-400" />
+            <span className="text-slate-700 dark:text-slate-300">Binding</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="w-6 h-0 border-t-2 border-blue-400 border-dashed" />
+            <span className="text-slate-700 dark:text-slate-300">State Change</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 };

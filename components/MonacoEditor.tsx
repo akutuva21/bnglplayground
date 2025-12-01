@@ -8,6 +8,12 @@ interface MonacoEditorProps {
   language?: string;
   theme?: 'light' | 'dark';
   markers?: EditorMarker[];
+  selection?: {
+    startLineNumber: number;
+    endLineNumber: number;
+    startColumn?: number;
+    endColumn?: number;
+  };
 }
 
 declare const window: any;
@@ -18,13 +24,13 @@ function loadMonaco() {
   if (monacoLoadPromise) {
     return monacoLoadPromise;
   }
-  
+
   monacoLoadPromise = new Promise((resolve, reject) => {
     if (window.monaco) {
       resolve(window.monaco);
       return;
     }
-    
+
     const script = document.createElement('script');
     script.src = 'https://cdn.jsdelivr.net/npm/monaco-editor@0.45.0/min/vs/loader.js';
     script.async = true;
@@ -37,16 +43,17 @@ function loadMonaco() {
     script.onerror = reject;
     document.head.appendChild(script);
   });
-  
+
   return monacoLoadPromise;
 }
 
-export const MonacoEditor: React.FC<MonacoEditorProps> = ({ 
-  value, 
-  onChange, 
-  language = 'bngl', 
+export const MonacoEditor: React.FC<MonacoEditorProps> = ({
+  value,
+  onChange,
+  language = 'bngl',
   theme = 'light',
   markers = [],
+  selection,
 }) => {
   const editorRef = useRef<HTMLDivElement>(null);
   const monacoRef = useRef<any>(null);
@@ -61,6 +68,23 @@ export const MonacoEditor: React.FC<MonacoEditorProps> = ({
   useEffect(() => {
     markersRef.current = markers;
   }, [markers]);
+
+  // Effect 4: Handle selection/reveal request
+  useEffect(() => {
+    const editor = editorInstanceRef.current;
+    if (!editor || !selection) return;
+
+    // Reveal the line in the center
+    editor.revealLineInCenter(selection.startLineNumber);
+
+    // Select the range
+    editor.setSelection({
+      startLineNumber: selection.startLineNumber,
+      startColumn: selection.startColumn ?? 1,
+      endLineNumber: selection.endLineNumber,
+      endColumn: selection.endColumn ?? 1,
+    });
+  }, [selection]);
 
   // Effect 1: Create editor on mount and dispose on unmount
   useEffect(() => {
@@ -113,6 +137,52 @@ export const MonacoEditor: React.FC<MonacoEditorProps> = ({
           scrollBeyondLastLine: false,
         });
 
+        // Register a completion provider for BNGL language (snippets & basic templates)
+        if (!monaco.languages.registerCompletionItemProvider.__bngl_registered) {
+          monaco.languages.registerCompletionItemProvider('bngl', {
+            provideCompletionItems: (model, position) => {
+              const suggestions = [
+                {
+                  label: 'begin model',
+                  kind: monaco.languages.CompletionItemKind.Snippet,
+                  insertText: ['begin model', '  begin parameters', '    k1 1.0', '  end parameters', '', '  begin molecule types', '    A(b)', '  end molecule types', '', '  begin reaction rules', '    A() -> A() k1', '  end reaction rules', 'end model'].join('\n'),
+                  documentation: 'Scaffold a minimal BNGL model with parameters and rules',
+                },
+                {
+                  label: 'parameter',
+                  kind: monaco.languages.CompletionItemKind.Snippet,
+                  insertText: 'k${1:rate} ${2:1.0}',
+                  insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+                  documentation: 'Insert a parameter definition',
+                },
+                {
+                  label: 'molecule type',
+                  kind: monaco.languages.CompletionItemKind.Snippet,
+                  insertText: 'X(${1:site})',
+                  insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+                  documentation: 'Create a molecule type',
+                },
+                {
+                  label: 'reaction rule',
+                  kind: monaco.languages.CompletionItemKind.Snippet,
+                  insertText: '${1:Reactants} -> ${2:Products} ${3:k1}',
+                  insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+                  documentation: 'Insert a rule template',
+                },
+                {
+                  label: 'simulate',
+                  kind: monaco.languages.CompletionItemKind.Snippet,
+                  insertText: 'simulate_ode({ method => "ode", t_end => ${1:100}, n_steps => ${2:100} })',
+                  insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+                  documentation: 'Add a simulate snippet (ODE/SSA)',
+                },
+              ];
+              return { suggestions } as any;
+            },
+          });
+          // mark to avoid double registration
+          monaco.languages.registerCompletionItemProvider.__bngl_registered = true;
+        }
         editorInstanceRef.current = editor;
 
         contentListener = editor.onDidChangeModelContent(() => {

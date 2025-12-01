@@ -179,7 +179,7 @@ export class BNGLParser {
     };
 
     const reactants = parseEntityList(reactantsStr).map(s => this.parseSpeciesGraph(s.trim(), true));
-    const products = parseEntityList(productsStr).map(s => this.parseSpeciesGraph(s.trim(), false));
+    const products = parseEntityList(productsStr).map(s => this.parseSpeciesGraph(s.trim(), true));
 
     // For now, assume no transformations (deleteBonds, addBonds, etc.)
     // TODO: Parse transformations from rule string

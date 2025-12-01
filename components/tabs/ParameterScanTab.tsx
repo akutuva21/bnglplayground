@@ -9,6 +9,7 @@ import { Card } from '../ui/Card';
 import { DataTable } from '../ui/DataTable';
 import { bnglService } from '../../services/bnglService';
 import { CHART_COLORS } from '../../constants';
+import HeatmapChart from '../HeatmapChart';
 
 interface ParameterScanTabProps {
   model: BNGLModel | null;
@@ -91,8 +92,24 @@ const cloneWithParameters = (model: BNGLModel, overrides: Record<string, number>
   return nextModel;
 };
 
-const generateRange = (start: number, end: number, steps: number): number[] => {
+const generateRange = (start: number, end: number, steps: number, isLog = false): number[] => {
   if (steps <= 1) return [start];
+  if (isLog) {
+    // Log scale requires positive start/end; fall back to linear if invalid
+    if (start <= 0 || end <= 0) {
+      // eslint-disable-next-line no-console
+      console.warn('Log scale requires positive start/end values. Falling back to linear.');
+      isLog = false;
+    }
+  }
+
+  if (isLog) {
+    const logStart = Math.log10(start);
+    const logEnd = Math.log10(end);
+    const delta = (logEnd - logStart) / (steps - 1);
+    return Array.from({ length: steps }, (_, index) => Number(Math.pow(10, logStart + index * delta).toPrecision(12)));
+  }
+
   const delta = (end - start) / (steps - 1);
   return Array.from({ length: steps }, (_, index) => Number((start + index * delta).toPrecision(12)));
 };
@@ -124,6 +141,7 @@ export const ParameterScanTab: React.FC<ParameterScanTabProps> = ({ model }) => 
   const [isRunning, setIsRunning] = useState(false);
   const [progress, setProgress] = useState({ current: 0, total: 0 });
   const [error, setError] = useState<string | null>(null);
+  const [isLogScale, setIsLogScale] = useState(false);
   // Use refs for lifecycle-bound cancellers and mounts to avoid setState-after-unmount races
   const scanAbortControllerRef = useRef<AbortController | null>(null);
   const isMountedRef = useRef(true);
@@ -271,6 +289,18 @@ export const ParameterScanTab: React.FC<ParameterScanTabProps> = ({ model }) => 
     return { matrix, min, max };
   }, [twoDResult, selectedObservable]);
 
+  const heatmapPoints = useMemo(() => {
+    if (!twoDResult || !selectedObservable) return [] as { x: number; y: number; value: number }[];
+    const grid = twoDResult.grid[selectedObservable];
+    const points: { x: number; y: number; value: number }[] = [];
+    for (let yi = 0; yi < twoDResult.yValues.length; yi += 1) {
+      for (let xi = 0; xi < twoDResult.xValues.length; xi += 1) {
+        points.push({ x: twoDResult.xValues[xi], y: twoDResult.yValues[yi], value: grid[yi][xi] });
+      }
+    }
+    return points;
+  }, [twoDResult, selectedObservable]);
+
   // Do not early-return here; use `guardMessage` in the JSX so hook order stays stable across renders.
 
   const baseParam1 = parameter1 && model ? model.parameters[parameter1] : undefined;
@@ -298,9 +328,11 @@ export const ParameterScanTab: React.FC<ParameterScanTabProps> = ({ model }) => 
 
   const canRunScan = () => {
     if (!parameter1 || !effectiveParam1Start || !effectiveParam1End || !param1Steps) return false;
+    if (isLogScale && (Number(effectiveParam1Start) <= 0 || Number(effectiveParam1End) <= 0)) return false;
     if (scanType === '2d' && (!parameter2 || parameter2 === parameter1 || !effectiveParam2Start || !effectiveParam2End || !param2Steps)) {
       return false;
     }
+    if (scanType === '2d' && isLogScale && (Number(effectiveParam2Start) <= 0 || Number(effectiveParam2End) <= 0)) return false;
     return true;
   };
 
@@ -328,7 +360,7 @@ export const ParameterScanTab: React.FC<ParameterScanTabProps> = ({ model }) => 
       return;
     }
 
-    const range1 = generateRange(start1, end1, steps1);
+    const range1 = generateRange(start1, end1, steps1, isLogScale);
     let totalRuns = range1.length;
     let range2: number[] = [];
 
@@ -344,7 +376,7 @@ export const ParameterScanTab: React.FC<ParameterScanTabProps> = ({ model }) => 
         setError('Select two different parameters for a 2D scan.');
         return;
       }
-      range2 = generateRange(start2, end2, steps2);
+      range2 = generateRange(start2, end2, steps2, isLogScale);
       totalRuns = range1.length * range2.length;
     }
 
@@ -491,6 +523,55 @@ export const ParameterScanTab: React.FC<ParameterScanTabProps> = ({ model }) => 
     return `rgba(33,128,141,${alpha.toFixed(2)})`;
   };
 
+  const downloadFile = (content: string, fileName: string, mime = 'text/csv') => {
+    const blob = new Blob([content], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleExportCSV = () => {
+    // Long-form CSV: param1_name, param1_value, [param2_name, param2_value], observable_name, value
+    if (!oneDResult && !twoDResult) return;
+    const rows: string[] = [];
+    if (oneDResult) {
+      const p1Name = oneDResult.parameterName;
+      const header = ['param1_name', 'param1_value', 'observable', 'value'];
+      rows.push(header.join(','));
+      oneDResult.values.forEach((entry) => {
+        Object.entries(entry.observables).forEach(([obs, val]) => {
+          rows.push([p1Name, entry.parameterValue, obs, val].join(','));
+        });
+      });
+    } else if (twoDResult) {
+      const [p1Name, p2Name] = twoDResult.parameterNames;
+      const header = ['param1_name', 'param1_value', 'param2_name', 'param2_value', 'observable', 'value'];
+      rows.push(header.join(','));
+      // iterate y (rows) and x (cols)
+      twoDResult.yValues.forEach((yVal, yi) => {
+        twoDResult.xValues.forEach((xVal, xi) => {
+          Object.keys(twoDResult.grid).forEach((obs) => {
+            const val = twoDResult.grid[obs][yi][xi];
+            rows.push([p1Name, xVal, p2Name, yVal, obs, val].join(','));
+          });
+        });
+      });
+    }
+
+    downloadFile(rows.join('\n'), 'parameter_scan.csv', 'text/csv');
+  };
+
+  const handleExportJSON = () => {
+    const exportObj = oneDResult ?? twoDResult ?? null;
+    if (!exportObj) return;
+    downloadFile(JSON.stringify(exportObj, null, 2), 'parameter_scan.json', 'application/json');
+  };
+
   const guardMessage = !model
     ? 'Parse a model to set up a parameter scan.'
     : parameterNames.length === 0
@@ -523,6 +604,21 @@ export const ParameterScanTab: React.FC<ParameterScanTabProps> = ({ model }) => 
               <input type="radio" value="2d" checked={scanType === '2d'} onChange={() => setScanType('2d')} />
               2D Scan
             </label>
+            <label className="flex items-center gap-2 ml-2 text-sm text-slate-600 dark:text-slate-300">
+              <input
+                type="checkbox"
+                checked={isLogScale}
+                onChange={(evt) => setIsLogScale(evt.target.checked)}
+                className="rounded border-slate-300 text-primary focus:ring-primary"
+              />
+              Log scale
+            </label>
+            {isLogScale && (Number(effectiveParam1Start) <= 0 || Number(effectiveParam1End) <= 0) && (
+              <div className="text-xs text-red-600 dark:text-red-400 ml-3">Log scale requires positive start/end values for parameter 1.</div>
+            )}
+            {scanType === '2d' && isLogScale && (Number(effectiveParam2Start) <= 0 || Number(effectiveParam2End) <= 0) && (
+              <div className="text-xs text-red-600 dark:text-red-400 ml-3">Log scale requires positive start/end values for parameter 2.</div>
+            )}
           </div>
         </div>
 
@@ -624,11 +720,19 @@ export const ParameterScanTab: React.FC<ParameterScanTabProps> = ({ model }) => 
       
 
       {isRunning && (
-        <div className="flex items-center gap-3 text-sm text-slate-600 dark:text-slate-300">
-          <LoadingSpinner className="w-5 h-5" />
-          <span>
-            Running simulations… {progress.current} / {progress.total}
-          </span>
+        <div className="w-full">
+          <div className="flex items-center gap-3 text-sm text-slate-600 dark:text-slate-300">
+            <LoadingSpinner className="w-5 h-5" />
+            <span>
+              Running simulations… {progress.current} / {progress.total}
+            </span>
+          </div>
+          <div className="w-full bg-slate-200 rounded-full h-2.5 dark:bg-slate-700 mt-3">
+            <div
+              className="bg-primary h-2.5 rounded-full transition-all duration-300"
+              style={{ width: `${(progress.current / Math.max(1, progress.total)) * 100}%` }}
+            />
+          </div>
         </div>
       )}
 
@@ -646,6 +750,7 @@ export const ParameterScanTab: React.FC<ParameterScanTabProps> = ({ model }) => 
                   label={{ value: oneDResult.parameterName, position: 'insideBottom', offset: -6 }}
                   type="number"
                   domain={[xAxisDomain[0], xAxisDomain[1]]}
+                  scale={isLogScale ? 'log' : 'linear'}
                   tickFormatter={(value) => formatNumber(value)}
                 />
                 <YAxis
@@ -686,48 +791,33 @@ export const ParameterScanTab: React.FC<ParameterScanTabProps> = ({ model }) => 
               ...observableNames.map((name) => formatNumber(entry.observables[name] ?? 0)),
             ])}
           />
+          <div className="flex gap-2 justify-end">
+            <Button variant="subtle" onClick={handleExportCSV}>Export CSV</Button>
+            <Button variant="subtle" onClick={handleExportJSON}>Export JSON</Button>
+          </div>
         </Card>
       )}
 
       {twoDResult && heatmapData && (
         <Card className="space-y-6">
           <h3 className="text-lg font-semibold text-slate-800 dark:text-slate-100">2D Scan Heatmap</h3>
-          <div className="overflow-x-auto">
-            <table className="min-w-full border-collapse">
-              <thead>
-                <tr>
-                  <th className="px-4 py-2 text-left text-xs font-semibold text-slate-500 dark:text-slate-300">
-                    {twoDResult.parameterNames[1]} ↓ / {twoDResult.parameterNames[0]} →
-                  </th>
-                  {twoDResult.xValues.map((value, index) => (
-                    <th key={index} className="px-4 py-2 text-xs font-semibold text-slate-500 dark:text-slate-300">
-                      {formatNumber(value)}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {twoDResult.yValues.map((yValue, rowIndex) => (
-                  <tr key={rowIndex}>
-                    <td className="px-4 py-2 text-xs font-semibold text-slate-500 dark:text-slate-300">
-                      {formatNumber(yValue)}
-                    </td>
-                    {heatmapData.matrix[rowIndex].map((cellValue, columnIndex) => (
-                      <td
-                        key={columnIndex}
-                        className="px-4 py-2 text-sm text-slate-800 dark:text-slate-100 text-center"
-                        style={{ backgroundColor: makeCellColor(cellValue, heatmapData.min, heatmapData.max) }}
-                      >
-                        {formatNumber(cellValue)}
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div>
+            <div className="mb-3 text-sm text-slate-500">Heatmap of {selectedObservable} across {twoDResult.parameterNames[0]} and {twoDResult.parameterNames[1]}</div>
+            <HeatmapChart
+              data={heatmapPoints}
+              xAxisLabel={twoDResult.parameterNames[0]}
+              yAxisLabel={twoDResult.parameterNames[1]}
+              zAxisLabel={selectedObservable}
+              width={Math.min(800, Math.max(300, twoDResult.xValues.length * 28))}
+              height={Math.min(550, Math.max(240, twoDResult.yValues.length * 28))}
+            />
           </div>
           <div className="text-xs text-slate-500 dark:text-slate-400">
             Range: {formatNumber(heatmapData.min)} – {formatNumber(heatmapData.max)} ({selectedObservable})
+          </div>
+          <div className="flex gap-2 justify-end">
+            <Button variant="subtle" onClick={handleExportCSV}>Export CSV</Button>
+            <Button variant="subtle" onClick={handleExportJSON}>Export JSON</Button>
           </div>
         </Card>
       )}

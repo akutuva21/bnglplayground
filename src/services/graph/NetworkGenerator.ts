@@ -40,6 +40,8 @@ export interface GeneratorProgress {
 
 export class NetworkGenerator {
   private options: GeneratorOptions;
+    // NEW: map Molecule name -> set of species indices that contain that molecule
+    private speciesByMoleculeIndex: Map<string, Set<number>> = new Map();
   private startTime: number = 0;
   private lastMemoryCheck: number = 0;
   private aggLimitWarnings = 0;
@@ -75,6 +77,9 @@ export class NetworkGenerator {
     this.speciesLimitWarnings = 0;
     this.currentRuleName = null;
 
+    // Reset inverted index
+    this.speciesByMoleculeIndex.clear();
+
     const speciesMap = new Map<string, Species>();
     const speciesList: Species[] = [];
     const reactionsList: Rxn[] = [];
@@ -94,9 +99,14 @@ export class NetworkGenerator {
         const species = new Species(sg, speciesList.length);
         speciesMap.set(canonical, species);
         speciesList.push(species);
+          // index seed species
+          // indexSpecies will add entries to speciesByMoleculeIndex
+          this.indexSpecies(species);
         queue.push(sg);
       }
     }
+    
+
 
     let iteration = 0;
 
@@ -341,7 +351,36 @@ export class NetworkGenerator {
       }
       const firstDegeneracyCache = new WeakMap<MatchMap, number>();
 
-      for (const reactant2Species of allSpecies) {
+      // Candidate optimization: choose only species that contain the molecules required by secondPattern
+      const requiredMols = secondPattern.molecules.map((m) => m.name);
+      let candidateIndices: Set<number> | null = null;
+
+      if (requiredMols.length === 0) {
+        candidateIndices = new Set(allSpecies.map((s) => s.index));
+      } else {
+        for (const molName of requiredMols) {
+          const set = this.speciesByMoleculeIndex.get(molName);
+          if (!set) {
+            candidateIndices = null;
+            break;
+          }
+          if (!candidateIndices) {
+            candidateIndices = new Set(set);
+          } else {
+            // intersect
+            const next = new Set<number>();
+            for (const id of candidateIndices) {
+              if (set.has(id)) next.add(id);
+            }
+            candidateIndices = next;
+          }
+        }
+      }
+
+      if (!candidateIndices || candidateIndices.size === 0) continue;
+
+      for (const idx of candidateIndices) {
+        const reactant2Species = allSpecies[idx];
         if (signal?.aborted) {
           throw new DOMException('Network generation cancelled', 'AbortError');
         }
@@ -728,7 +767,21 @@ export class NetworkGenerator {
       throw new DOMException('Network generation cancelled', 'AbortError');
     }
 
+    // Index the newly created species by molecule type for faster candidate lookup
+    this.indexSpecies(species);
+
     return species;
+  }
+
+  /**
+   * Add a species' molecules to the inverted index for quick lookup when matching
+   */
+  private indexSpecies(species: Species): void {
+    for (const m of species.graph.molecules) {
+      const set = this.speciesByMoleculeIndex.get(m.name) ?? new Set<number>();
+      set.add(species.index);
+      this.speciesByMoleculeIndex.set(m.name, set);
+    }
   }
 
   /**

@@ -154,6 +154,10 @@ export class NetworkTracer {
       forward.name = name;
       forward.allowsIntramolecular = rule.allowsIntramolecular ?? false;
 
+      if (rule.constraints && rule.constraints.length > 0) {
+        forward.applyConstraints(rule.constraints, (s) => BNGLParser.parseSpeciesGraph(s));
+      }
+
       if (!rule.isBidirectional) {
         return [forward];
       }

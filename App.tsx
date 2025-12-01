@@ -33,6 +33,8 @@ function App() {
   const [validationWarnings, setValidationWarnings] = useState<ValidationWarning[]>([]);
   const [editorMarkers, setEditorMarkers] = useState<EditorMarker[]>([]);
 
+  const [editorSelection, setEditorSelection] = useState<{ startLineNumber: number; endLineNumber: number } | undefined>(undefined);
+
   const parseAbortRef = useRef<AbortController | null>(null);
   const simulateAbortRef = useRef<AbortController | null>(null);
 
@@ -48,6 +50,56 @@ function App() {
       }
     };
   }, []);
+
+  const findRuleLine = useCallback((code: string, ruleIndex: number, rule: any): number => {
+    const lines = code.split('\n');
+    let rulesBlockStart = -1;
+
+    // Find begin reaction rules
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].trim().startsWith('begin reaction rules')) {
+        rulesBlockStart = i;
+        break;
+      }
+    }
+
+    if (rulesBlockStart === -1) return -1;
+
+    // Simple heuristic: assume rules are in order after the block start
+    // Skip comments and empty lines
+    let currentRuleIndex = 0;
+    for (let i = rulesBlockStart + 1; i < lines.length; i++) {
+      const line = lines[i].trim();
+      if (line.startsWith('end reaction rules')) break;
+      if (!line || line.startsWith('#')) continue;
+
+      if (currentRuleIndex === ruleIndex) {
+        return i + 1; // 1-based line number
+      }
+      currentRuleIndex++;
+    }
+
+    return -1;
+  }, []);
+
+  const handleSelectRule = useCallback((ruleId: string) => {
+    if (!model) return;
+
+    // Extract index from "rule_N"
+    const match = ruleId.match(/rule_(\d+)/);
+    if (match) {
+      const index = parseInt(match[1], 10);
+      if (!isNaN(index) && index >= 0 && index < model.reactions.length) {
+        const line = findRuleLine(code, index, model.reactions[index]);
+        if (line !== -1) {
+          setEditorSelection({
+            startLineNumber: line,
+            endLineNumber: line,
+          });
+        }
+      }
+    }
+  }, [code, model, findRuleLine]);
 
   const handleParse = useCallback(async () => {
     setResults(null);
@@ -101,11 +153,11 @@ function App() {
     if (complexity > 150) {
       const proceed = window.confirm(
         `⚠️ Large Model Detected\n\n` +
-          `Complexity score: ${Math.round(complexity)}\n` +
-          `• ${model.reactions.length} rules\n` +
-          `• ${model.species.length} seed species\n` +
-          `• ${model.moleculeTypes.length} molecule types\n\n` +
-          `Network generation may take 30-60 seconds. Continue?`
+        `Complexity score: ${Math.round(complexity)}\n` +
+        `• ${model.reactions.length} rules\n` +
+        `• ${model.species.length} seed species\n` +
+        `• ${model.moleculeTypes.length} molecule types\n\n` +
+        `Network generation may take 30-60 seconds. Continue?`
       );
       if (!proceed) return;
     }
@@ -121,15 +173,17 @@ function App() {
         description: `Simulation (${options.method})`,
       });
       setResults(simResults);
-      setStatus({ type: 'success', message: (
-        <span>
-          Simulation ({options.method}) completed.&nbsp;
-          Explore: <button className="underline" onClick={() => setActiveVizTab(0)}>Time Courses</button>,{' '}
-          <button className="underline" onClick={() => setActiveVizTab(1)}>Regulatory</button>,{' '}
-          <button className="underline" onClick={() => setActiveVizTab(3)}>FIM</button>,{' '}
-          <button className="underline" onClick={() => setActiveVizTab(4)}>Steady State</button>
-        </span>
-      ) });
+      setStatus({
+        type: 'success', message: (
+          <span>
+            Simulation ({options.method}) completed.&nbsp;
+            Explore: <button className="underline" onClick={() => setActiveVizTab(0)}>Time Courses</button>,{' '}
+            <button className="underline" onClick={() => setActiveVizTab(1)}>Regulatory</button>,{' '}
+            <button className="underline" onClick={() => setActiveVizTab(3)}>FIM</button>,{' '}
+            <button className="underline" onClick={() => setActiveVizTab(4)}>Steady State</button>
+          </span>
+        )
+      });
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') {
         if (error.message.includes('cancelled by user')) {
@@ -308,6 +362,7 @@ function App() {
                 modelExists={!!model}
                 validationWarnings={validationWarnings}
                 editorMarkers={editorMarkers}
+                selection={editorSelection}
               />
             </div>
             <div className="flex min-w-0 flex-col">
@@ -319,6 +374,7 @@ function App() {
                 onCancelSimulation={handleCancelSimulation}
                 activeTabIndex={activeVizTab}
                 onActiveTabIndexChange={setActiveVizTab}
+                onSelectRule={handleSelectRule}
               />
             </div>
           </div>

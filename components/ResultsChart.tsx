@@ -13,10 +13,10 @@ interface ResultsChartProps {
 }
 
 type ZoomDomain = {
-    x1: number | 'dataMin';
-    x2: number | 'dataMax';
-    y1: number | 'dataMin';
-    y2: number | 'dataMax';
+  x1: number | 'dataMin';
+  x2: number | 'dataMax';
+  y1: number | 'dataMin';
+  y2: number | 'dataMax';
 }
 
 const CustomLegend = (props: any) => {
@@ -41,7 +41,7 @@ const CustomLegend = (props: any) => {
 export const ResultsChart: React.FC<ResultsChartProps> = ({ results, model, visibleSpecies, onVisibleSpeciesChange, highlightedSeries = [] }) => {
   const [zoomHistory, setZoomHistory] = useState<ZoomDomain[]>([]);
   const [selection, setSelection] = useState<ZoomDomain | null>(null);
-  const [filterMode, setFilterMode] = useState<'all' | 'observables' | 'search'>('all');
+  const [filterMode, setFilterMode] = useState<'all' | 'search'>('all');
   const [searchTerm, setSearchTerm] = useState('');
 
   // Reset zoom state when the results object changes to avoid carrying zoom across runs
@@ -106,10 +106,8 @@ export const ResultsChart: React.FC<ResultsChartProps> = ({ results, model, visi
   };
 
   const speciesToPlot = results.headers.filter(h => h !== 'time');
-  const observablesSet = new Set((model?.observables ?? []).map((o) => o.name));
   const filterVisibleSpecies = (name: string) => {
     if (filterMode === 'all') return true;
-    if (filterMode === 'observables') return observablesSet.has(name);
     if (filterMode === 'search') return searchTerm.trim() === '' ? true : name.toLowerCase().includes(searchTerm.toLowerCase());
     return true;
   };
@@ -119,8 +117,8 @@ export const ResultsChart: React.FC<ResultsChartProps> = ({ results, model, visi
   return (
     <Card className="max-w-full overflow-hidden">
       <ResponsiveContainer width="100%" height={400}>
-        <LineChart 
-          data={results.data} 
+        <LineChart
+          data={results.data}
           margin={{ top: 5, right: 20, left: 10, bottom: 5 }}
           onMouseDown={handleMouseDown}
           onMouseMove={handleMouseMove}
@@ -128,20 +126,20 @@ export const ResultsChart: React.FC<ResultsChartProps> = ({ results, model, visi
           onDoubleClick={handleDoubleClick}
         >
           <CartesianGrid strokeDasharray="3 3" stroke="rgba(128, 128, 128, 0.3)" />
-          <XAxis 
-            dataKey="time" 
-            label={{ value: 'Time', position: 'insideBottom', offset: -5 }} 
-            type="number" 
+          <XAxis
+            dataKey="time"
+            label={{ value: 'Time', position: 'insideBottom', offset: -5 }}
+            type="number"
             domain={currentDomain ? [currentDomain.x1, currentDomain.x2] : ['dataMin', 'dataMax']}
             allowDataOverflow={true}
           />
-          <YAxis 
+          <YAxis
             label={{ value: 'Concentration', angle: -90, position: 'insideLeft' }}
             domain={currentDomain ? [currentDomain.y1, currentDomain.y2] : [0, 'dataMax']}
             allowDataOverflow={true}
             tickFormatter={(value) => value.toFixed(0)}
           />
-          <Tooltip 
+          <Tooltip
             formatter={(value: any) => {
               const num = typeof value === 'number' ? value : parseFloat(value);
               return num.toFixed(2);
@@ -162,10 +160,10 @@ export const ResultsChart: React.FC<ResultsChartProps> = ({ results, model, visi
             />
           ))}
           {selection && (
-            <ReferenceArea 
-              x1={selection.x1} 
-              x2={selection.x2} 
-              strokeOpacity={0.3} 
+            <ReferenceArea
+              x1={selection.x1}
+              x2={selection.x2}
+              strokeOpacity={0.3}
               fill="#8884d8"
               fillOpacity={0.2}
             />
@@ -176,7 +174,6 @@ export const ResultsChart: React.FC<ResultsChartProps> = ({ results, model, visi
         <div className="flex items-center gap-2">
           <div className="inline-flex gap-2">
             <button className={`px-3 py-1 rounded ${filterMode === 'all' ? 'bg-primary text-white' : 'bg-slate-100'}`} onClick={() => setFilterMode('all')}>All</button>
-            <button className={`px-3 py-1 rounded ${filterMode === 'observables' ? 'bg-primary text-white' : 'bg-slate-100'}`} onClick={() => setFilterMode('observables')}>Observables only</button>
             <button className={`px-3 py-1 rounded ${filterMode === 'search' ? 'bg-primary text-white' : 'bg-slate-100'}`} onClick={() => setFilterMode('search')}>Search</button>
           </div>
           {filterMode === 'search' && (
@@ -184,7 +181,7 @@ export const ResultsChart: React.FC<ResultsChartProps> = ({ results, model, visi
           )}
         </div>
         <div>
-          <button onClick={() => { setZoomHistory([]); setSelection(null); onVisibleSpeciesChange(new Set(model?.observables.map(o => o.name) ?? [])); }} className="px-3 py-1 rounded bg-slate-100">Reset view</button>
+          <button onClick={() => { setZoomHistory([]); setSelection(null); onVisibleSpeciesChange(new Set(speciesToPlot)); }} className="px-3 py-1 rounded bg-slate-100">Reset view</button>
         </div>
       </div>
       <div className="text-center text-xs text-slate-500 mt-2">

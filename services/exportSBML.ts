@@ -7,12 +7,13 @@ export const exportToSBML = (model: BNGLModel): string => {
   xmlParts.push(`<model id="bngl_export" name="BioNetGen Export">`);
   xmlParts.push(`<listOfCompartments>`);
 
-  // Collect compartments used in species, default if none
+  // Collect compartments from model.compartments if provided; otherwise use default
   const compartments = new Set<string>();
-  (model.species || []).forEach((s) => {
-    // if we ever add compartments to BNGLSpecies, parse them here; fallback to default
+  if (model.compartments && model.compartments.length) {
+    model.compartments.forEach((c) => compartments.add(c.name));
+  } else {
     compartments.add('default');
-  });
+  }
 
   if (compartments.size === 0) compartments.add('default');
   compartments.forEach((c) => {

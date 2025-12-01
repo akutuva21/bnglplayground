@@ -1,9 +1,8 @@
-import type { ReactionRule } from '../../types';
-import type { ContactEdge, ContactMap } from '../../types/visualization';
+import type { ReactionRule, BNGLMoleculeType } from '../../types';
+import type { ContactMap, ContactEdge } from '../../types/visualization';
 import {
   extractBonds,
   parseSpeciesGraphs,
-  snapshotComponentStates,
 } from './speciesGraphUtils';
 
 interface ContactMapOptions {
@@ -13,11 +12,37 @@ interface ContactMapOptions {
 
 export const buildContactMap = (
   rules: ReactionRule[],
+  moleculeTypes: BNGLMoleculeType[] = [],
   options: ContactMapOptions = {},
 ): ContactMap => {
   // Track molecules and their component set for hierarchical (compound) nodes
   const moleculeMap = new Map<string, Set<string>>();
+  // Track states for each component: key="molecule_component", value=Set<stateName>
+  const componentStateMap = new Map<string, Set<string>>();
   const edgeMap = new Map<string, ContactEdge>();
+  const activeMolecules = new Set<string>();
+
+  // Pre-populate states from molecule types definition if available
+  moleculeTypes.forEach((mt) => {
+    if (!moleculeMap.has(mt.name)) moleculeMap.set(mt.name, new Set());
+
+    mt.components.forEach((compStr) => {
+      // compStr is like "state~inactive~active" or just "binding_site"
+      const parts = compStr.split('~');
+      const compName = parts[0];
+
+      moleculeMap.get(mt.name)!.add(compName);
+
+      const states = parts.slice(1);
+      if (states.length > 0) {
+        const compKey = `${mt.name}_${compName}`;
+        if (!componentStateMap.has(compKey)) {
+          componentStateMap.set(compKey, new Set());
+        }
+        states.forEach((s) => componentStateMap.get(compKey)!.add(s));
+      }
+    });
+  });
 
   rules.forEach((rule, ruleIndex) => {
     const ruleId = options.getRuleId?.(rule, ruleIndex) ?? rule.name ?? `rule_${ruleIndex + 1}`;
@@ -25,18 +50,32 @@ export const buildContactMap = (
     const reactantGraphs = parseSpeciesGraphs(rule.reactants);
     const productGraphs = parseSpeciesGraphs(rule.products);
 
-    reactantGraphs.forEach((graph) => {
-      graph.molecules.forEach((molecule) => {
-        if (!moleculeMap.has(molecule.name)) moleculeMap.set(molecule.name, new Set());
-        molecule.components.forEach((c) => moleculeMap.get(molecule.name)!.add(c.name));
+    const collectStructure = (graphs: any[]) => {
+      graphs.forEach((graph) => {
+        graph.molecules.forEach((molecule: any) => {
+          if (molecule.name === '0' || molecule.name === 'Trash') return;
+
+          activeMolecules.add(molecule.name);
+
+          if (!moleculeMap.has(molecule.name)) moleculeMap.set(molecule.name, new Set());
+
+          molecule.components.forEach((c: any) => {
+            moleculeMap.get(molecule.name)!.add(c.name);
+
+            if (c.state) {
+              const compKey = `${molecule.name}_${c.name}`;
+              if (!componentStateMap.has(compKey)) {
+                componentStateMap.set(compKey, new Set());
+              }
+              componentStateMap.get(compKey)!.add(c.state);
+            }
+          });
+        });
       });
-    });
-    productGraphs.forEach((graph) => {
-      graph.molecules.forEach((molecule) => {
-        if (!moleculeMap.has(molecule.name)) moleculeMap.set(molecule.name, new Set());
-        molecule.components.forEach((c) => moleculeMap.get(molecule.name)!.add(c.name));
-      });
-    });
+    };
+
+    collectStructure(reactantGraphs);
+    collectStructure(productGraphs);
 
     // (colors are chosen at render-time by viewers using colorFromName)
 
@@ -69,75 +108,100 @@ export const buildContactMap = (
       }
     });
 
-    const reactantStates = snapshotComponentStates(reactantGraphs);
-    const productStates = snapshotComponentStates(productGraphs);
 
-    productStates.forEach((productState, key) => {
-      const reactantState = reactantStates.get(key);
-      const fromState = reactantState?.state ?? 'none';
-      const toState = productState.state ?? 'none';
 
-      if (fromState === toState) {
-        return;
-      }
+  // Detect molecule conversions/transport (e.g. A -> B or A@cyto -> A@store)
+  // This is common in compartmental models where no binding occurs but species change type or location.
+  if (reactantGraphs.length === 1 && productGraphs.length === 1) {
+    const rMol = reactantGraphs[0].molecules[0];
+    const pMol = productGraphs[0].molecules[0];
 
-      // State changes are component-level and stay within same molecule
-      const compId = `${productState.molecule}_${productState.component}`;
-      const edgeKey = `${compId}:state`;
-      if (!edgeMap.has(edgeKey)) {
-        edgeMap.set(edgeKey, {
-          from: compId,
-          to: compId,
-          interactionType: 'state_change',
-          componentPair: [productState.component, productState.component],
-          ruleIds: [],
-          ruleLabels: [],
-        });
-      }
-      const edge = edgeMap.get(edgeKey)!;
-      if (!edge.ruleIds.includes(ruleId)) {
-        edge.ruleIds.push(ruleId);
-        edge.ruleLabels.push(ruleLabel);
-      }
-    });
-  });
+    // If we have single molecules on both sides
+    if (rMol && pMol) {
+      // Check if they are different molecules OR same molecule in different compartments
+      // Check if they are different molecules OR same molecule in different compartments
+      const differentName = rMol.name !== pMol.name;
+      const differentComp = rMol.compartment !== pMol.compartment;
 
-  // Create compound nodes for molecules and component child nodes
-  const nodes: any[] = [];
-  // Add compartments if present (detect by looking for @compartment on molecules in rules)
-  const compartmentSet = new Set<string>();
-  // Map a molecule type to a compartment if seen
-  const moleculeCompartment = new Map<string, string>();
-  // scan rules again to collect molecule compartments
-  rules.forEach((rule) => {
-    const graphs = parseSpeciesGraphs([...rule.reactants, ...rule.products]);
-    graphs.forEach((g) => {
-      g.molecules.forEach((m) => {
-        if (m.compartment) {
-          compartmentSet.add(m.compartment);
-          if (!moleculeCompartment.has(m.name)) moleculeCompartment.set(m.name, m.compartment);
+      if (differentName || differentComp) {
+        // Create an edge between the MOLECULES directly
+        const sourceId = rMol.name;
+        const targetId = pMol.name;
+        const edgeKey = `${sourceId}->${targetId}`;
+        
+        if (!edgeMap.has(edgeKey)) {
+          edgeMap.set(edgeKey, {
+            from: sourceId,
+            to: targetId,
+            interactionType: 'state_change', // Re-using state_change style for conversions
+            ruleIds: [],
+            ruleLabels: [],
+          });
         }
-      });
+        const edge = edgeMap.get(edgeKey)!;
+        if (!edge.ruleIds.includes(ruleId)) {
+          edge.ruleIds.push(ruleId);
+          edge.ruleLabels.push(ruleLabel);
+        }
+      }
+    }
+  }
+});
+
+// Create compound nodes for molecules and component child nodes
+const nodes: any[] = [];
+// Add compartments if present (detect by looking for @compartment on molecules in rules)
+const compartmentSet = new Set<string>();
+// Map a molecule type to a compartment if seen
+const moleculeCompartment = new Map<string, string>();
+
+// scan rules again to collect molecule compartments
+rules.forEach((rule) => {
+  const graphs = parseSpeciesGraphs([...rule.reactants, ...rule.products]);
+  graphs.forEach((g) => {
+    g.molecules.forEach((m) => {
+      if (m.compartment) {
+        compartmentSet.add(m.compartment);
+        if (!moleculeCompartment.has(m.name)) moleculeCompartment.set(m.name, m.compartment);
+      }
     });
   });
+});
 
-  // Emit compartment parent nodes first so cytoscape layout keeps them at root
-  compartmentSet.forEach((compName) => {
-    nodes.push({ id: `compartment_${compName}`, label: compName, type: 'compartment' });
+// Emit compartment parent nodes first so cytoscape layout keeps them at root
+compartmentSet.forEach((compName) => {
+  nodes.push({ id: `compartment_${compName}`, label: compName, type: 'compartment' });
+});
+
+moleculeMap.forEach((components, molName) => {
+  // Only include molecules that appear in rules (active)
+  if (!activeMolecules.has(molName)) return;
+
+  const molParent = moleculeCompartment.get(molName);
+  const molParentId = molParent ? `compartment_${molParent}` : undefined;
+  nodes.push({ id: molName, label: molName, type: 'molecule', parent: molParentId });
+
+  Array.from(components).forEach((compName) => {
+    const compId = `${molName}_${compName}`;
+
+    // Format label to include states: "name (s1, s2)"
+    let label = compName;
+    const compKey = `${molName}_${compName}`;
+    if (componentStateMap.has(compKey)) {
+      const states = Array.from(componentStateMap.get(compKey)!);
+      if (states.length > 0) {
+        label += `\n(${states.join(', ')})`;
+      }
+    }
+
+    nodes.push({ id: compId, label: label, parent: molName, type: 'component' });
+
+    // State nodes removed to match BNG style (states are part of component definition)
   });
+});
 
-  moleculeMap.forEach((components, molName) => {
-    const molParent = moleculeCompartment.get(molName);
-    const molParentId = molParent ? `compartment_${molParent}` : undefined;
-    nodes.push({ id: molName, label: molName, type: 'molecule', parent: molParentId });
-    Array.from(components).forEach((compName) => {
-      const compId = `${molName}_${compName}`;
-      nodes.push({ id: compId, label: compName, parent: molName, type: 'component' });
-    });
-  });
-
-  return {
-    nodes,
-    edges: Array.from(edgeMap.values()),
-  };
+return {
+  nodes,
+  edges: Array.from(edgeMap.values()),
+};
 };

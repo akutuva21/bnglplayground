@@ -107,9 +107,10 @@ const splitProductsAndRates = (segment: string, parameters: Record<string, numbe
     const isParam = Object.hasOwn(parameters, cleaned);
     const numeric = cleaned !== '' && !Number.isNaN(parseFloat(cleaned));
     const looksLikeSpecies = speciesPattern.test(cleaned);
-    const expressionToken = !looksLikeSpecies && /[*/()+-]/.test(cleaned);
+    const isKeyword = /^(exclude_reactants|include_reactants|DeleteMolecules|MoveMolecules)/.test(cleaned);
+    const expressionToken = (!looksLikeSpecies || isKeyword) && /[*/()+-]/.test(cleaned);
     const singleZeroProduct = tokens.length === 1 && cleaned === '0';
-    if ((!isParam && !numeric && !expressionToken) || singleZeroProduct) break;
+    if ((!isParam && !numeric && !expressionToken && !isKeyword) || singleZeroProduct) break;
 
     rateTokens.push(cleaned);
     tokens.pop();
@@ -208,7 +209,10 @@ export function parseBNGL(code: string, options: ParseBNGLOptions = {}): BNGLMod
     }
   }
 
-  const speciesContent = getBlockContent('seed species', code);
+  let speciesContent = getBlockContent('seed species', code);
+  if (!speciesContent) {
+    speciesContent = getBlockContent('species', code);
+  }
   if (speciesContent) {
     const parametersMap = new Map(Object.entries(model.parameters));
     const seedSpeciesMap = BNGLParser.parseSeedSpecies(speciesContent, parametersMap);
@@ -281,7 +285,10 @@ export function parseBNGL(code: string, options: ParseBNGLOptions = {}): BNGLMod
     }
   }
 
-  const rulesContent = getBlockContent('reaction rules', code);
+  let rulesContent = getBlockContent('reaction rules', code);
+  if (!rulesContent) {
+    rulesContent = getBlockContent('reactions', code);
+  }
   if (rulesContent) {
     const statements: string[] = [];
     let current = '';
@@ -345,14 +352,43 @@ export function parseBNGL(code: string, options: ParseBNGLOptions = {}): BNGLMod
       const rawProducts = productChunk ? parseEntityList(productChunk) : [];
       const products = rawProducts.length === 1 && rawProducts[0] === '0' ? [] : rawProducts;
 
-      const rateTokens = rateChunk
-        .split(',')
-        .flatMap((segment) => segment.split(/\s+/))
-        .map((token) => token.trim())
-        .filter((token) => token.length > 0);
+      // Tokenize rate chunk respecting parentheses to handle function calls like exclude_reactants(2,R)
+      const tokenizeRateChunk = (chunk: string) => {
+        const tokens: string[] = [];
+        let current = '';
+        let depth = 0;
+        
+        for (let i = 0; i < chunk.length; i++) {
+          const ch = chunk[i];
+          if (ch === '(') depth++;
+          else if (ch === ')') depth--;
+          
+          if ((ch === ',' || /\s/.test(ch)) && depth === 0) {
+            if (current.trim()) tokens.push(current.trim());
+            current = '';
+          } else {
+            current += ch;
+          }
+        }
+        if (current.trim()) tokens.push(current.trim());
+        return tokens;
+      };
 
-      const forwardRateLabel = rateTokens[0] ?? '';
-      const reverseRateLabel = rateTokens[1];
+      const allRateTokens = tokenizeRateChunk(rateChunk);
+      
+      const constraints: string[] = [];
+      const rateConstants: string[] = [];
+      
+      allRateTokens.forEach(token => {
+        if (token.startsWith('exclude_reactants') || token.startsWith('include_reactants')) {
+          constraints.push(token);
+        } else {
+          rateConstants.push(token);
+        }
+      });
+
+      const forwardRateLabel = rateConstants[0] ?? '';
+      const reverseRateLabel = rateConstants[1];
 
       if (products.length === 0 && forwardRateLabel === '') {
         console.warn('[parseBNGL] Rule parsing: could not determine products or rate for:', statement);
@@ -366,6 +402,7 @@ export function parseBNGL(code: string, options: ParseBNGLOptions = {}): BNGLMod
         rate: forwardRateLabel,
         isBidirectional,
         reverseRate: isBidirectional ? reverseRateLabel : undefined,
+        constraints,
         comment: extractInlineComment(statement),
       });
     });

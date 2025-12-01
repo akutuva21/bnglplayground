@@ -71,6 +71,8 @@ export interface ReactionRule {
   rate: string;
   reverseRate?: string;
   isBidirectional: boolean;
+  constraints?: string[];
+  allowsIntramolecular?: boolean;
   comment?: string;
 }
 

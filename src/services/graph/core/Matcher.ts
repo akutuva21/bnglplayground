@@ -3,7 +3,7 @@ import { SpeciesGraph } from './SpeciesGraph';
 import { Component } from './Component';
 
 const shouldLogGraphMatcher =
-  typeof process !== 'undefined' && process.env?.DEBUG_GRAPH_MATCHER === 'true';
+  typeof process !== 'undefined' && process.env && process.env.DEBUG_GRAPH_MATCHER === 'true';
 
 const adjacencyKey = (molIdx: number, compIdx: number): string => `${molIdx}.${compIdx}`;
 

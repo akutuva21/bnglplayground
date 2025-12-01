@@ -527,6 +527,11 @@ async function generateExpandedNetwork(jobId: number, inputModel: BNGLModel): Pr
     const forwardRule = BNGLParser.parseRxnRule(ruleStr, rate);
     forwardRule.name = r.reactants.join('+') + '->' + r.products.join('+');
 
+    // Apply constraints if present
+    if (r.constraints && r.constraints.length > 0) {
+      forwardRule.applyConstraints(r.constraints, (s) => BNGLParser.parseSpeciesGraph(s));
+    }
+
     if (r.isBidirectional) {
       const reverseRuleStr = `${formatSpeciesList(r.products)} -> ${formatSpeciesList(r.reactants)}`;
       const reverseRule = BNGLParser.parseRxnRule(reverseRuleStr, reverseRate);

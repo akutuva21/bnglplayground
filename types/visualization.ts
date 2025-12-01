@@ -108,3 +108,21 @@ export interface RuleFlowGraph {
   nodes: RuleFlowNode[];
   edges: RuleFlowEdge[];
 }
+
+export interface RegulatoryNode {
+  id: string;
+  label: string;
+  type: 'rule' | 'species';
+  details?: string;
+}
+
+export interface RegulatoryEdge {
+  from: string;
+  to: string;
+  type: 'reactant' | 'product' | 'catalyst';
+}
+
+export interface RegulatoryGraph {
+  nodes: RegulatoryNode[];
+  edges: RegulatoryEdge[];
+}

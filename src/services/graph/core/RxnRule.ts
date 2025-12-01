@@ -15,6 +15,10 @@ export class RxnRule {
   changeStates: Array<[number, number, string]>; // [mol, comp, newState]
   deleteMolecules: number[]; // molecule indices to delete
   addMolecules: Molecule[]; // molecules to add
+  excludeReactants: Array<{ reactantIndex: number; pattern: SpeciesGraph }>;
+  includeReactants: Array<{ reactantIndex: number; pattern: SpeciesGraph }>;
+  isDeleteMolecules: boolean;
+  isMoveConnected: boolean;
 
   constructor(
     name: string,
@@ -33,6 +37,10 @@ export class RxnRule {
     this.changeStates = [];
     this.deleteMolecules = [];
     this.addMolecules = [];
+    this.excludeReactants = [];
+    this.includeReactants = [];
+    this.isDeleteMolecules = false;
+    this.isMoveConnected = false;
   }
 
   /**
@@ -74,5 +82,40 @@ export class RxnRule {
     }
 
     return false;
+  }
+
+  /**
+   * Apply constraints to the rule
+   * @param constraints List of constraint strings (e.g., "exclude_reactants(1, A(b~P))")
+   * @param parser Callback to parse BNGL patterns into SpeciesGraph
+   */
+  applyConstraints(constraints: string[], parser: (str: string) => SpeciesGraph) {
+    for (const constraint of constraints) {
+      // Match constraint type, index, and pattern
+      // Example: exclude_reactants(1, A(b~P))
+      const match = constraint.match(/^(exclude_reactants|include_reactants)\s*\(\s*(\d+)\s*,\s*(.+)\s*\)$/);
+      if (match) {
+        const type = match[1];
+        const index = parseInt(match[2], 10);
+        const patternStr = match[3];
+        
+        try {
+          const pattern = parser(patternStr);
+          
+          // BNGL uses 1-based indexing, convert to 0-based
+          const reactantIndex = index - 1;
+
+          if (type === 'exclude_reactants') {
+            this.excludeReactants.push({ reactantIndex, pattern });
+          } else if (type === 'include_reactants') {
+            this.includeReactants.push({ reactantIndex, pattern });
+          }
+        } catch (e) {
+          console.warn(`Failed to parse pattern in constraint: ${constraint}`, e);
+        }
+      } else {
+        console.warn(`Unknown or malformed constraint: ${constraint}`);
+      }
+    }
   }
 }

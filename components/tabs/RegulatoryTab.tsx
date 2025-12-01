@@ -1,12 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { BNGLModel, SimulationResults } from '../../types';
-import { ContactMapViewer } from '../ContactMapViewer';
-import { ARGraphViewer } from '../ARGraphViewer';
-import { RuleFlowViewer } from '../RuleFlowViewer';
+import { RegulatoryGraphViewer } from '../RegulatoryGraphViewer';
 import { ResultsChart } from '../ResultsChart';
-import { buildContactMap } from '../../services/visualization/contactMapBuilder';
-import { buildAtomRuleGraph } from '../../services/visualization/arGraphBuilder';
-import { buildRuleFlowGraph } from '../../services/visualization/ruleFlowBuilder';
+import { buildRegulatoryGraph } from '../../services/visualization/regulatoryGraphBuilder';
 import { buildRegulatoryInsights } from '../../services/visualization/regulatoryInsights';
 import { classifyRuleChanges } from '../../services/ruleAnalysis/ruleChangeClassifier';
 import type { RuleChangeSummary } from '../../services/ruleAnalysis/ruleChangeTypes';
@@ -48,31 +44,13 @@ export const RegulatoryTab: React.FC<RegulatoryTabProps> = ({ model, results, se
     }, {} as Record<string, RuleChangeSummary>);
   }, [model]);
 
-  const contactMap = useMemo(() => {
-    if (!model) {
-      return { nodes: [], edges: [] };
-    }
-    return buildContactMap(model.reactionRules, {
-      getRuleId,
-      getRuleLabel,
-    });
-  }, [model]);
 
-  const atomRuleGraph = useMemo(() => {
-    if (!model) {
-      return { nodes: [], edges: [] };
-    }
-    return buildAtomRuleGraph(model.reactionRules, {
-      getRuleId,
-      getRuleLabel,
-    });
-  }, [model]);
 
-  const ruleFlowGraph = useMemo(() => {
+  const regulatoryGraph = useMemo(() => {
     if (!model) {
       return { nodes: [], edges: [] };
     }
-    return buildRuleFlowGraph(model.reactionRules, {
+    return buildRegulatoryGraph(model.reactionRules, {
       getRuleId,
       getRuleLabel,
     });
@@ -172,11 +150,10 @@ export const RegulatoryTab: React.FC<RegulatoryTabProps> = ({ model, results, se
             key={atom}
             type="button"
             onClick={() => setSelectedAtomId(atom)}
-            className={`rounded-full border px-3 py-1 text-xs transition-colors ${
-              selectedAtomId === atom
-                ? `${accent} border-transparent text-white`
-                : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200'
-            }`}
+            className={`rounded-full border px-3 py-1 text-xs transition-colors ${selectedAtomId === atom
+              ? `${accent} border-transparent text-white`
+              : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200'
+              }`}
           >
             {insights?.atomMetadata[atom]?.label ?? atom}
           </button>
@@ -282,34 +259,20 @@ export const RegulatoryTab: React.FC<RegulatoryTabProps> = ({ model, results, se
       </section>
 
       {viewMode === 'graph' ? (
-        <div className="space-y-8">
-          <section>
-            <div className="mb-3">
-              <h4 className="text-sm font-semibold text-slate-700 dark:text-slate-200">Contact Map</h4>
-              <p className="text-xs text-slate-500 dark:text-slate-400">Molecule types that can interact. Click an edge to jump to a representative rule.</p>
+        <div className="flex-1 flex flex-col min-h-0">
+          <section className="flex-1 flex flex-col min-h-0">
+            <div className="mb-3 shrink-0">
+              <h4 className="text-sm font-semibold text-slate-700 dark:text-slate-200">Regulatory Graph</h4>
+              <p className="text-xs text-slate-500 dark:text-slate-400">Bipartite graph showing relationships between rules and species patterns.</p>
             </div>
-            <ContactMapViewer contactMap={contactMap} selectedRuleId={selectedRuleId} onSelectRule={onSelectRule} />
-          </section>
-          <section className="grid items-start gap-8 lg:grid-cols-2">
-            <div>
-              <div className="mb-3">
-                <h4 className="text-sm font-semibold text-slate-700 dark:text-slate-200">Atom–Rule Graph</h4>
-                <p className="text-xs text-slate-500 dark:text-slate-400">Bipartite graph linking structural atoms to the rules that consume, modify, or produce them.</p>
-              </div>
-              <ARGraphViewer
-                arGraph={atomRuleGraph}
-                selectedRuleId={selectedRuleId}
-                selectedAtomId={selectedAtomId}
-                onSelectRule={onSelectRule}
-                onSelectAtom={setSelectedAtomId}
-              />
-            </div>
-            <div>
-              <div className="mb-3">
-                <h4 className="text-sm font-semibold text-slate-700 dark:text-slate-200">Rule Flow</h4>
-                <p className="text-xs text-slate-500 dark:text-slate-400">Layered DAG connecting rules when one produces structures the next rule needs.</p>
-              </div>
-              <RuleFlowViewer graph={ruleFlowGraph} selectedRuleId={selectedRuleId} onSelectRule={onSelectRule} />
+            <div className="flex-1 min-h-0 relative">
+              {regulatoryGraph.nodes.length > 0 ? (
+                <RegulatoryGraphViewer graph={regulatoryGraph} onSelectRule={onSelectRule} />
+              ) : (
+                <div className="flex h-full items-center justify-center text-slate-500 dark:text-slate-400">
+                  No regulatory graph nodes generated. Check if rules are parsed correctly.
+                </div>
+              )}
             </div>
           </section>
         </div>
