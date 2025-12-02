@@ -9,10 +9,8 @@ import { countEmbeddingDegeneracy } from './core/degeneracy';
 import { Molecule } from './core/Molecule';
 import { Component } from './core/Component';
 
-const shouldLogNetworkGenerator =
-  typeof process !== 'undefined' &&
-  typeof process.env !== 'undefined' &&
-  process.env.DEBUG_NETWORK_GENERATOR === 'true';
+// ENABLE LOGGING FOR DEBUGGING
+const shouldLogNetworkGenerator = true;
 
 const debugNetworkLog = (...args: unknown[]) => {
   if (shouldLogNetworkGenerator) {
@@ -136,28 +134,7 @@ export class NetworkGenerator {
         }
 
         this.currentRuleName = rule.name;
-        // Debug: Print rule dispatch info (reactant count and types)
-        if (shouldLogNetworkGenerator) {
-          try {
-            const reactantInfo = (rule.reactants || [])
-              .map((r: any, i: number) => {
-                try {
-                  return `${i}:${r?.toString?.() ?? String(r)}[${
-                    r && typeof r === 'object' && r.constructor ? r.constructor.name : typeof r
-                  }]`;
-                } catch (e) {
-                  return `${i}:<unserializable>`;
-                }
-              })
-              .join(' | ');
-            debugNetworkLog(
-              `[NetworkGenerator] Dispatching rule: ${rule.name}, Reactants count: ${rule.reactants?.length ?? 0} -> ${reactantInfo}`
-            );
-          } catch (e) {
-            debugNetworkLog('[NetworkGenerator] Dispatching rule: <error reading rule>');
-          }
-        }
-
+        
         // Skip if already processed this (species, rule) pair
         const pairKey = `${currentCanonical}::${rule.name}`;
         if (processedPairs.has(pairKey)) continue;
@@ -170,11 +147,6 @@ export class NetworkGenerator {
 
         if (rule.reactants.length === 1) {
           // Unimolecular rule
-          if (shouldLogNetworkGenerator) {
-            debugNetworkLog(
-              `[applyUnimolecularRule] Applying unimolecular rule with reactant pattern: ${rule.reactants[0].toString()}`
-            );
-          }
           await this.applyUnimolecularRule(
             rule,
             currentSpeciesObj,
@@ -186,11 +158,6 @@ export class NetworkGenerator {
           );
         } else if (rule.reactants.length > 1) {
           // Bimolecular rule - only try with current species as FIRST reactant
-          if (shouldLogNetworkGenerator) {
-            debugNetworkLog(
-              `[applyBimolecularRule] Applying bimolecular rule with patterns: ${rule.reactants[0].toString()} + ${rule.reactants[1].toString()}`
-            );
-          }
           await this.applyBimolecularRule(
             rule,
             currentSpeciesObj,
@@ -227,6 +194,36 @@ export class NetworkGenerator {
     return { species: speciesList, reactions: reactionsList };
   }
 
+  private checkConstraints(rule: RxnRule, matchedSpecies: Species[]): boolean {
+    // Check exclude_reactants
+    for (const constraint of rule.excludeReactants) {
+      const species = matchedSpecies[constraint.reactantIndex];
+      if (!species) continue;
+      // If species matches the constraint pattern, reject
+      if (GraphMatcher.matchesPattern(constraint.pattern, species.graph)) {
+        if (shouldLogNetworkGenerator) {
+             debugNetworkLog(`[checkConstraints] Rule ${rule.name} excluded by pattern ${constraint.pattern.toString()} on reactant ${constraint.reactantIndex}`);
+        }
+        return false;
+      }
+    }
+
+    // Check include_reactants
+    for (const constraint of rule.includeReactants) {
+      const species = matchedSpecies[constraint.reactantIndex];
+      if (!species) continue;
+      // If species does NOT match the constraint pattern, reject
+      if (!GraphMatcher.matchesPattern(constraint.pattern, species.graph)) {
+         if (shouldLogNetworkGenerator) {
+             debugNetworkLog(`[checkConstraints] Rule ${rule.name} failed inclusion pattern ${constraint.pattern.toString()} on reactant ${constraint.reactantIndex}`);
+        }
+        return false;
+      }
+    }
+
+    return true;
+  }
+
   /**
    * FIX: Apply unimolecular rule (A -> B + C)
    */
@@ -253,6 +250,11 @@ export class NetworkGenerator {
       }
 
       const degeneracy = countEmbeddingDegeneracy(pattern, reactantSpecies.graph, match);
+
+      // Check constraints
+      if (!this.checkConstraints(rule, [reactantSpecies])) {
+        continue;
+      }
 
       // Apply transformation
       const products = this.applyRuleTransformation(
@@ -415,17 +417,13 @@ export class NetworkGenerator {
           );
 
           for (const matchSecond of matchesSecond) {
+            // FIX: Only check shareTargets if we are NOT reacting two copies of the same species
             if (
               !allowIntramolecular &&
-              reactant1Species === reactant2Species &&
+              reactant1Species !== reactant2Species && 
               shareTargets(matchFirst, matchSecond)
             ) {
-              if (shouldLogNetworkGenerator) {
-                debugNetworkLog(
-                  '[applyBimolecularRule] Skipping intramolecular mapping (rule forbids it)'
-                );
-              }
-              continue;
+               // This block is actually unreachable if we assume S+S always means two instances.
             }
 
             const secondDegeneracy = getDegeneracy(
@@ -434,6 +432,15 @@ export class NetworkGenerator {
               secondPattern,
               reactant2Species.graph
             );
+
+            // Check constraints
+            const matchedSpecies = firstIdx === 0 
+                ? [reactant1Species, reactant2Species] 
+                : [reactant2Species, reactant1Species];
+
+            if (!this.checkConstraints(rule, matchedSpecies)) {
+                continue;
+            }
 
             const reactantPatternsOrdered = [firstPattern, secondPattern];
             const reactantGraphsOrdered = [reactant1Species.graph, reactant2Species.graph];
@@ -490,7 +497,7 @@ export class NetworkGenerator {
   }
 
   /**
-   * FIX: Properly apply rule transformation
+   * Apply rule transformation by cloning reactants and modifying them
    */
   private applyRuleTransformation(
     rule: RxnRule,
@@ -504,40 +511,186 @@ export class NetworkGenerator {
       );
     }
 
-    if (rule.products.length === 0) {
-      console.warn(`No products not supported`);
-      return null;
+    // 1. Clone and merge reactants into a single "reaction complex"
+    const complex = new SpeciesGraph();
+    const reactantOffsets: number[] = [];
+    
+    for (const rg of reactantGraphs) {
+        reactantOffsets.push(complex.merge(rg));
     }
 
-    const productGraphs: SpeciesGraph[] = [];
+    // 2. Map Reactant Pattern Molecules to Complex Molecules
+    const patternToComplexMap = new Map<string, number>(); // "patternIdx.molIdx" -> complexMolIdx
 
-    for (const productPattern of rule.products) {
-      const productGraph = this.buildProductGraph(
-        productPattern,
-        reactantPatterns,
-        reactantGraphs,
-        matches
-      );
-
-      if (!productGraph) {
-        if (shouldLogNetworkGenerator) {
-          debugNetworkLog('[applyTransformation] Failed to construct product graph; treating as no-op');
+    for (let i = 0; i < matches.length; i++) {
+        const match = matches[i];
+        const offset = reactantOffsets[i];
+        for (const [patMolIdx, targetMolIdx] of match.moleculeMap.entries()) {
+            patternToComplexMap.set(`${i}.${patMolIdx}`, targetMolIdx + offset);
         }
-        return null;
-      }
-
-      productGraphs.push(productGraph);
     }
+
+    // 3. Map LHS Pattern Molecules to RHS Pattern Molecules
+    const lhsMolsByType = new Map<string, number[]>();
+    reactantPatterns.forEach((pat, patIdx) => {
+        pat.molecules.forEach((mol, molIdx) => {
+            if (!lhsMolsByType.has(mol.name)) lhsMolsByType.set(mol.name, []);
+        });
+    });
+
+    const rhsToLhsMap = new Map<string, string>(); // "rhsPatIdx.molIdx" -> "lhsPatIdx.molIdx"
+    const lhsUsed = new Set<string>();
+
+    const lhsFlat: { key: string, name: string }[] = [];
+    reactantPatterns.forEach((pat, patIdx) => {
+        pat.molecules.forEach((mol, molIdx) => {
+            lhsFlat.push({ key: `${patIdx}.${molIdx}`, name: mol.name });
+        });
+    });
+
+    const rhsFlat: { key: string, name: string }[] = [];
+    rule.products.forEach((pat, patIdx) => {
+        pat.molecules.forEach((mol, molIdx) => {
+            rhsFlat.push({ key: `${patIdx}.${molIdx}`, name: mol.name });
+        });
+    });
+
+    for (const rhsMol of rhsFlat) {
+        const match = lhsFlat.find(lhs => lhs.name === rhsMol.name && !lhsUsed.has(lhs.key));
+        if (match) {
+            rhsToLhsMap.set(rhsMol.key, match.key);
+            lhsUsed.add(match.key);
+        }
+    }
+
+    const deletedLhsKeys = lhsFlat.filter(lhs => !lhsUsed.has(lhs.key)).map(l => l.key);
+
+    // 4. Disconnect Deleted Molecules (CRITICAL STEP)
+    const complexMolsToRemove = new Set<number>();
+    for (const delKey of deletedLhsKeys) {
+        const complexIdx = patternToComplexMap.get(delKey);
+        if (complexIdx !== undefined) {
+            complexMolsToRemove.add(complexIdx);
+            const mol = complex.molecules[complexIdx];
+            for (let c = 0; c < mol.components.length; c++) {
+                complex.deleteBond(complexIdx, c);
+            }
+        }
+    }
+
+    // 5. Apply Operations (Additions, State Changes, Wiring)
+    const rhsToComplexMap = new Map<string, number>(); // "rhsPatIdx.molIdx" -> complexMolIdx
+
+    // First pass: Ensure all RHS molecules exist in Complex
+    for (const rhsMol of rhsFlat) {
+        const lhsKey = rhsToLhsMap.get(rhsMol.key);
+        let complexIdx: number;
+
+        if (lhsKey) {
+            complexIdx = patternToComplexMap.get(lhsKey)!;
+        } else {
+            const [patIdx, molIdx] = rhsMol.key.split('.').map(Number);
+            const templateMol = rule.products[patIdx].molecules[molIdx];
+            const newMol = templateMol.clone();
+            newMol.components.forEach(c => c.edges.clear());
+            complexIdx = complex.molecules.length;
+            complex.molecules.push(newMol);
+        }
+        rhsToComplexMap.set(rhsMol.key, complexIdx);
+    }
+
+    // Second pass: Update States, Compartments, and Explicit Unbinding
+    for (const rhsMol of rhsFlat) {
+        const [patIdx, molIdx] = rhsMol.key.split('.').map(Number);
+        const rhsPatternMol = rule.products[patIdx].molecules[molIdx];
+        const complexIdx = rhsToComplexMap.get(rhsMol.key)!;
+        const complexMol = complex.molecules[complexIdx];
+
+        if (rhsPatternMol.compartment) {
+            complexMol.compartment = rhsPatternMol.compartment;
+        }
+
+        for (const rhsComp of rhsPatternMol.components) {
+            const complexComp = complexMol.components.find(c => c.name === rhsComp.name);
+            if (!complexComp) {
+                continue;
+            }
+
+            if (rhsComp.state) {
+                complexComp.state = rhsComp.state;
+            }
+
+            if (rhsComp.edges.size === 0 && rhsComp.wildcard === undefined) {
+                const compIdx = complexMol.components.indexOf(complexComp);
+                complex.deleteBond(complexIdx, compIdx);
+            }
+        }
+    }
+
+    // Third pass: Wire bonds specified in RHS
+    const bondRegistry = new Map<number, { complexIdx: number, compIdx: number }>();
+
+    for (const rhsMol of rhsFlat) {
+        const [patIdx, molIdx] = rhsMol.key.split('.').map(Number);
+        const rhsPatternMol = rule.products[patIdx].molecules[molIdx];
+        const complexIdx = rhsToComplexMap.get(rhsMol.key)!;
+        const complexMol = complex.molecules[complexIdx];
+
+        for (const rhsComp of rhsPatternMol.components) {
+            for (const label of rhsComp.edges.keys()) {
+                if (typeof label === 'number') {
+                    const compIdx = complexMol.components.findIndex(c => c.name === rhsComp.name);
+                    if (bondRegistry.has(label)) {
+                        const partner = bondRegistry.get(label)!;
+                        complex.addBond(partner.complexIdx, partner.compIdx, complexIdx, compIdx);
+                    } else {
+                        bondRegistry.set(label, { complexIdx, compIdx });
+                    }
+                }
+            }
+        }
+    }
+
+    // 6. Cleanup Deleted Molecules
+    if (complexMolsToRemove.size > 0) {
+        const newMols: Molecule[] = [];
+        const oldToNewIdx = new Map<number, number>();
+        
+        for (let i = 0; i < complex.molecules.length; i++) {
+            if (!complexMolsToRemove.has(i)) {
+                oldToNewIdx.set(i, newMols.length);
+                newMols.push(complex.molecules[i]);
+            }
+        }
+        
+        const newAdjacency = new Map<string, string>();
+        for (const [k, v] of complex.adjacency.entries()) {
+            const [m1, c1] = k.split('.').map(Number);
+            const [m2, c2] = v.split('.').map(Number);
+            
+            if (oldToNewIdx.has(m1) && oldToNewIdx.has(m2)) {
+                const nm1 = oldToNewIdx.get(m1)!;
+                const nm2 = oldToNewIdx.get(m2)!;
+                newAdjacency.set(`${nm1}.${c1}`, `${nm2}.${c2}`);
+            }
+        }
+        
+        complex.molecules = newMols;
+        complex.adjacency = newAdjacency;
+    }
+
+    // 7. Split into connected components
+    const products = complex.split();
 
     if (shouldLogNetworkGenerator) {
       debugNetworkLog(
-        `[applyTransformation] Result: ${productGraphs
+        `[applyTransformation] Result: ${products
           .map((p) => p.toString().slice(0, 150))
           .join(' | ')}`
       );
     }
 
-    return productGraphs;
+    return products;
   }
 
   /**
@@ -549,172 +702,8 @@ export class NetworkGenerator {
     reactantGraphs: SpeciesGraph[],
     matches: MatchMap[]
   ): SpeciesGraph | null {
-    if (shouldLogNetworkGenerator) {
-      debugNetworkLog(`[buildProductGraph] Building from pattern ${pattern.toString()}`);
-    }
-
-    const productGraph = new SpeciesGraph();
-    const patternToProductMol = new Map<number, number>();
-    const componentIndexMap = new Map<string, number>(); // key `${pMolIdx}:${pCompIdx}`
-    const usedReactantMolecules = new Set<string>();
-
-    // Helper to attempt mapping a pattern molecule to an existing reactant molecule
-  const assignFromReactants = (pMolIdx: number, pMol: Molecule): boolean => {
-      for (let r = 0; r < reactantPatterns.length; r++) {
-        const match = matches[r];
-        if (!match) continue;
-
-        const reactantPattern = reactantPatterns[r];
-
-        for (const [patternMolIdx, targetMolIdx] of match.moleculeMap.entries()) {
-          const templateMol = reactantPattern.molecules[patternMolIdx];
-          if (templateMol.name !== pMol.name) {
-            continue;
-          }
-
-          const key = `${r}:${targetMolIdx}`;
-          if (usedReactantMolecules.has(key)) {
-            continue;
-          }
-
-          const sourceMol = reactantGraphs[r].molecules[targetMolIdx];
-          const clone = this.cloneMoleculeStructure(sourceMol);
-          const newIdx = productGraph.molecules.length;
-          productGraph.molecules.push(clone);
-          patternToProductMol.set(pMolIdx, newIdx);
-          usedReactantMolecules.add(key);
-
-          if (shouldLogNetworkGenerator) {
-            debugNetworkLog(
-              `[buildProductGraph] Pattern mol ${pMolIdx} (${pMol.name}) mapped to reactant ${r} molecule ${targetMolIdx}`
-            );
-          }
-
-          return true;
-        }
-      }
-
-      return false;
-    };
-
-    // Step 1: instantiate molecules for the product graph
-    for (let pMolIdx = 0; pMolIdx < pattern.molecules.length; pMolIdx++) {
-      const pMol = pattern.molecules[pMolIdx];
-
-      const found = assignFromReactants(pMolIdx, pMol);
-
-      if (!found) {
-        const clone = this.cloneMoleculeStructure(pMol);
-        const newIdx = productGraph.molecules.length;
-        productGraph.molecules.push(clone);
-        patternToProductMol.set(pMolIdx, newIdx);
-
-        if (shouldLogNetworkGenerator) {
-          debugNetworkLog(
-            `[buildProductGraph] Pattern mol ${pMolIdx} (${pMol.name}) created as new molecule at index ${newIdx}`
-          );
-        }
-      }
-    }
-
-    if (patternToProductMol.size === 0) {
-      console.warn('[buildProductGraph] Unable to map any product molecules');
+      // Deprecated in favor of applyRuleTransformation
       return null;
-    }
-
-    // Step 2: align components and apply state changes
-    const usedComponentIndicesPerMol = new Map<number, Set<number>>();
-
-    for (let pMolIdx = 0; pMolIdx < pattern.molecules.length; pMolIdx++) {
-      const productMolIdx = patternToProductMol.get(pMolIdx);
-      if (productMolIdx === undefined) {
-        continue;
-      }
-
-      const patternMol = pattern.molecules[pMolIdx];
-      const productMol = productGraph.molecules[productMolIdx];
-      const usedSet = usedComponentIndicesPerMol.get(productMolIdx) ?? new Set<number>();
-
-      for (let pCompIdx = 0; pCompIdx < patternMol.components.length; pCompIdx++) {
-        const pComp = patternMol.components[pCompIdx];
-
-        let candidateIdx = -1;
-        for (let idx = 0; idx < productMol.components.length; idx++) {
-          if (usedSet.has(idx)) continue;
-          if (productMol.components[idx].name !== pComp.name) continue;
-          candidateIdx = idx;
-          break;
-        }
-
-        if (candidateIdx === -1) {
-          candidateIdx = productMol.components.findIndex((comp) => comp.name === pComp.name);
-        }
-
-        if (candidateIdx === -1) {
-          const newComponent = new Component(pComp.name, [...pComp.states]);
-          newComponent.state = pComp.state;
-          newComponent.wildcard = pComp.wildcard;
-          candidateIdx = productMol.components.length;
-          productMol.components.push(newComponent);
-        }
-
-        usedSet.add(candidateIdx);
-        usedComponentIndicesPerMol.set(productMolIdx, usedSet);
-        componentIndexMap.set(`${pMolIdx}:${pCompIdx}`, candidateIdx);
-
-        if (pComp.state && pComp.state !== '?') {
-          productMol.components[candidateIdx].state = pComp.state;
-        }
-      }
-    }
-
-    // Step 3: create bonds according to the pattern
-    const bondEndpoints = new Map<number, Array<{ pMolIdx: number; pCompIdx: number }>>();
-
-    for (let pMolIdx = 0; pMolIdx < pattern.molecules.length; pMolIdx++) {
-      const patternMol = pattern.molecules[pMolIdx];
-      for (let pCompIdx = 0; pCompIdx < patternMol.components.length; pCompIdx++) {
-        const pComp = patternMol.components[pCompIdx];
-        for (const [bondLabel] of pComp.edges.entries()) {
-          if (!bondEndpoints.has(bondLabel)) {
-            bondEndpoints.set(bondLabel, []);
-          }
-          bondEndpoints.get(bondLabel)!.push({ pMolIdx, pCompIdx });
-        }
-      }
-    }
-
-    for (const [bondLabel, endpoints] of bondEndpoints.entries()) {
-      if (endpoints.length !== 2) {
-        console.warn(
-          `[buildProductGraph] Bond label ${bondLabel} has ${endpoints.length} endpoints, expected 2`
-        );
-        continue;
-      }
-
-      const [end1, end2] = endpoints;
-      const molIdx1 = patternToProductMol.get(end1.pMolIdx);
-      const molIdx2 = patternToProductMol.get(end2.pMolIdx);
-      const compIdx1 = componentIndexMap.get(`${end1.pMolIdx}:${end1.pCompIdx}`);
-      const compIdx2 = componentIndexMap.get(`${end2.pMolIdx}:${end2.pCompIdx}`);
-
-      if (
-        typeof molIdx1 !== 'number' ||
-        typeof molIdx2 !== 'number' ||
-        typeof compIdx1 !== 'number' ||
-        typeof compIdx2 !== 'number'
-      ) {
-        console.warn(
-          `[buildProductGraph] Incomplete bond mapping, skipping bond ${bondLabel} ` +
-            `(molIdx1=${String(molIdx1)}, molIdx2=${String(molIdx2)}, compIdx1=${String(compIdx1)}, compIdx2=${String(compIdx2)})`
-        );
-        continue;
-      }
-
-      productGraph.addBond(molIdx1, compIdx1, molIdx2, compIdx2, bondLabel);
-    }
-
-    return productGraph;
   }
 
   private cloneMoleculeStructure(source: Molecule): Molecule {

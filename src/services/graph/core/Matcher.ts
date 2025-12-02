@@ -2,8 +2,8 @@
 import { SpeciesGraph } from './SpeciesGraph';
 import { Component } from './Component';
 
-const shouldLogGraphMatcher =
-  typeof process !== 'undefined' && process.env && process.env.DEBUG_GRAPH_MATCHER === 'true';
+// ENABLE LOGGING
+const shouldLogGraphMatcher = true;
 
 const adjacencyKey = (molIdx: number, compIdx: number): string => `${molIdx}.${compIdx}`;
 
@@ -221,9 +221,9 @@ export class GraphMatcher {
     this.vf2Backtrack(state, matches);
 
     if (shouldLogGraphMatcher) {
-      console.log(
-        `[GraphMatcher] Found ${matches.length} matches for pattern ${pattern.toString()} in target ${target.toString()}`
-      );
+      // console.log(
+      //   `[GraphMatcher] Found ${matches.length} matches for pattern ${pattern.toString()} in target ${target.toString()}`
+      // );
     }
     return matches;
   }
@@ -420,6 +420,9 @@ class VF2State {
 
     const componentMapping = this.matchComponents(pMol, tMol);
     if (!componentMapping) {
+      if (shouldLogGraphMatcher) {
+          console.log(`[GraphMatcher] Component match failed for P${pMol} -> T${tMol}`);
+      }
       return false;
     }
 
@@ -704,6 +707,9 @@ class VF2State {
 
     for (const tCompIdx of candidates) {
       if (!this.isComponentAssignmentValid(pMolIdx, pCompIdx, tMolIdx, tCompIdx, assignment)) {
+        if (shouldLogGraphMatcher) {
+            // console.log(`[GraphMatcher] Assignment invalid: P${pMolIdx}.${pCompIdx} -> T${tMolIdx}.${tCompIdx}`);
+        }
         continue;
       }
 
@@ -795,10 +801,16 @@ class VF2State {
     currentAssignments: Map<number, number>
   ): boolean {
     if (!this.componentBondStateCompatible(pMolIdx, pCompIdx, tMolIdx, tCompIdx)) {
+      if (shouldLogGraphMatcher) {
+          console.log(`[GraphMatcher] Bond state incompatible: P${pMolIdx}.${pCompIdx} vs T${tMolIdx}.${tCompIdx}`);
+      }
       return false;
     }
 
     if (!this.componentBondConsistencySatisfied(pMolIdx, pCompIdx, tMolIdx, tCompIdx, currentAssignments)) {
+      if (shouldLogGraphMatcher) {
+          console.log(`[GraphMatcher] Bond consistency failed: P${pMolIdx}.${pCompIdx} vs T${tMolIdx}.${tCompIdx}`);
+      }
       return false;
     }
 

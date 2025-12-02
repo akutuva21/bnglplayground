@@ -15,6 +15,7 @@ import { NetworkGenerator } from '../src/services/graph/NetworkGenerator';
 import { BNGLParser } from '../src/services/graph/core/BNGLParser';
 import { Species } from '../src/services/graph/core/Species';
 import { Rxn } from '../src/services/graph/core/Rxn';
+import { GraphCanonicalizer } from '../src/services/graph/core/Canonical';
 import { parseBNGL as parseBNGLModel } from './parseBNGL';
 
 const ctx: DedicatedWorkerGlobalScope = self as unknown as DedicatedWorkerGlobalScope;
@@ -143,7 +144,139 @@ ctx.addEventListener('unhandledrejection', (event) => {
   event.preventDefault();
 });
 
-// --- Existing BNGL worker implementation (migrated from String.raw) ---
+// --- Helper: Compartment Utilities ---
+const getCompartment = (s: string) => {
+    const prefix = s.match(/^@([A-Za-z0-9_]+):/);
+    if (prefix) return prefix[1];
+    const suffix = s.match(/@([A-Za-z0-9_]+)$/);
+    if (suffix) return suffix[1];
+    return null;
+};
+
+const removeCompartment = (s: string) => {
+    return s.replace(/^@[A-Za-z0-9_]+:/, '').replace(/@[A-Za-z0-9_]+$/, '');
+};
+
+// --- Helper: Match Single Molecule Pattern ---
+function matchMolecule(patMol: string, specMol: string): boolean {
+    // patMol and specMol are "Name(components)" strings, no compartments.
+    
+    const patMatch = patMol.match(/^([A-Za-z0-9_]+)(?:\(([^)]*)\))?$/);
+    const specMatch = specMol.match(/^([A-Za-z0-9_]+)(?:\(([^)]*)\))?$/);
+
+    if (!patMatch || !specMatch) return false;
+
+    const patName = patMatch[1];
+    const specName = specMatch[1];
+
+    if (patName !== specName) return false;
+
+    // If pattern has no component list (e.g. "A"), it matches any A.
+    if (patMatch[2] === undefined) return true;
+
+    const patCompsStr = patMatch[2];
+    const specCompsStr = specMatch[2] || "";
+
+    const patComps = patCompsStr.split(',').map(s => s.trim()).filter(Boolean);
+    const specComps = specCompsStr.split(',').map(s => s.trim()).filter(Boolean);
+
+    // Every component in pattern must be satisfied by species
+    return patComps.every(pCompStr => {
+        const pM = pCompStr.match(/^([A-Za-z0-9_]+)(?:~([A-Za-z0-9_]+))?(?:!([0-9]+|\+|\?))?$/);
+        if (!pM) return false;
+        const [_, pName, pState, pBond] = pM;
+
+        const sCompStr = specComps.find(s => {
+            const sName = s.split(/[~!]/)[0];
+            return sName === pName;
+        });
+
+        if (!sCompStr) return false;
+
+        const sM = sCompStr.match(/^([A-Za-z0-9_]+)(?:~([A-Za-z0-9_]+))?(?:!([0-9]+))?$/);
+        if (!sM) return false;
+        const [__, sName, sState, sBond] = sM;
+
+        if (pState && pState !== sState) return false;
+
+        if (pBond) {
+            if (pBond === '?') {
+                // !? matches anything
+            } else if (pBond === '+') {
+                if (!sBond) return false;
+            } else {
+                // Specific bond ID (e.g. !1) - treat as "must be bound" for simple matching
+                if (!sBond) return false;
+            }
+        } else {
+            // No bond specified in pattern means "must be unbound"
+            if (sBond) return false;
+        }
+
+        return true;
+    });
+}
+
+// --- Helper: Check if Species Matches Pattern (Boolean) ---
+function isSpeciesMatch(speciesStr: string, pattern: string): boolean {
+    const patComp = getCompartment(pattern);
+    const specComp = getCompartment(speciesStr);
+
+    if (patComp && patComp !== specComp) return false;
+
+    const cleanPat = removeCompartment(pattern);
+    const cleanSpec = removeCompartment(speciesStr);
+
+    if (cleanPat.includes('.')) {
+         const patternMolecules = cleanPat.split('.').map(s => s.trim());
+         const speciesMolecules = cleanSpec.split('.').map(s => s.trim());
+         
+         // Sort both to handle order independence for complexes
+         patternMolecules.sort();
+         speciesMolecules.sort();
+
+         if (patternMolecules.length !== speciesMolecules.length) return false;
+         
+         return patternMolecules.every((patMol, idx) => {
+             return matchMolecule(patMol, speciesMolecules[idx]);
+         });
+    } else {
+        // Single molecule pattern matching against potentially complex species
+        // If pattern is "A", it matches "A.B"
+        // If pattern is "A.B", it matches "A.B"
+        
+        // If pattern is single molecule, check if ANY molecule in species matches
+        const specMols = cleanSpec.split('.');
+        return specMols.some(sMol => matchMolecule(cleanPat, sMol));
+    }
+}
+
+// --- Helper: Count Matches for Molecules Observable ---
+function countPatternMatches(speciesStr: string, patternStr: string): number {
+    const patComp = getCompartment(patternStr);
+    const specComp = getCompartment(speciesStr);
+
+    if (patComp && patComp !== specComp) return 0;
+
+    const cleanPat = removeCompartment(patternStr);
+    const cleanSpec = removeCompartment(speciesStr);
+
+    if (cleanPat.includes('.')) {
+        // Complex pattern: fallback to boolean match (1 or 0)
+        // Exact counting of subgraph isomorphisms is expensive here
+        return isSpeciesMatch(speciesStr, patternStr) ? 1 : 0;
+    } else {
+        // Single molecule pattern: count occurrences in species string
+        const specMols = cleanSpec.split('.');
+        let count = 0;
+        for (const sMol of specMols) {
+            if (matchMolecule(cleanPat, sMol)) {
+                count++;
+            }
+        }
+        return count;
+    }
+}
 
 function parseBNGL(jobId: number, bnglCode: string): BNGLModel {
   return parseBNGLModel(bnglCode, {
@@ -152,359 +285,7 @@ function parseBNGL(jobId: number, bnglCode: string): BNGLModel {
 }
 
 function generateNetwork(jobId: number, inputModel: BNGLModel): BNGLModel {
-  const model: BNGLModel = JSON.parse(JSON.stringify(inputModel));
-
-  const trim = (value: string | undefined) => (typeof value === 'string' ? value.trim() : '');
-
-  const splitComponents = (componentString: string | undefined) => {
-    if (!componentString) return [] as string[];
-    return componentString
-      .split(',')
-      .map((component) => component.trim())
-      .filter((component) => component.length > 0);
-  };
-
-  const componentBase = (component: string) => component.split('~')[0].split('!')[0];
-
-  const completeComponentDefaults = (typedComponent: string) => {
-    const componentMatch = typedComponent.match(/^([^~]+)~(.+)$/);
-    if (componentMatch) {
-      const componentName = componentMatch[1];
-      const firstState = componentMatch[2].split('~')[0];
-      return `${componentName}~${firstState}`;
-    }
-    return typedComponent;
-  };
-
-  const completeSpeciesName = (partialSpecies: string): string => {
-    if (partialSpecies.includes('.')) {
-      return partialSpecies
-        .split('.')
-        .map((molecule) => completeSpeciesName(molecule.trim()))
-        .join('.');
-    }
-
-    const moleculeMatch = partialSpecies.match(/^([A-Za-z0-9_]+)\(([^)]*)\)/);
-    if (!moleculeMatch) {
-      const moleculeType = model.moleculeTypes.find((molecule) => molecule.name === partialSpecies);
-      if (moleculeType && moleculeType.components.length > 0) {
-        const defaultComponents = moleculeType.components.map(completeComponentDefaults);
-        return `${partialSpecies}(${defaultComponents.join(',')})`;
-      }
-      return partialSpecies;
-    }
-
-    const moleculeName = moleculeMatch[1];
-    const specifiedComponents = moleculeMatch[2].split(',').map((component) => component.trim()).filter(Boolean);
-    const moleculeType = model.moleculeTypes.find((molecule) => molecule.name === moleculeName);
-    if (!moleculeType) return partialSpecies;
-
-    const completedComponents: string[] = [];
-    moleculeType.components.forEach((typedComponent) => {
-      const baseName = componentBase(typedComponent);
-      const specifiedComponent = specifiedComponents.find((component) => componentBase(component) === baseName);
-      if (specifiedComponent) {
-        completedComponents.push(specifiedComponent);
-      } else {
-        completedComponents.push(completeComponentDefaults(typedComponent));
-      }
-    });
-
-    specifiedComponents.forEach((specifiedComponent) => {
-      const specifiedName = componentBase(specifiedComponent);
-      if (!completedComponents.some((component) => componentBase(component) === specifiedName)) {
-        completedComponents.push(specifiedComponent);
-      }
-    });
-
-    return `${moleculeName}(${completedComponents.join(',')})`;
-  };
-
-  const patternMatchesSpecies = (pattern: string, speciesName: string): boolean => {
-    if (pattern === speciesName) return true;
-
-    const matchesSingleMolecule = (patternMolStr: string, speciesMolStr: string) => {
-      const patternMol = patternMolStr.match(/^([A-Za-z0-9_]+)\(([^)]*)\)/);
-      const speciesMol = speciesMolStr.match(/^([A-Za-z0-9_]+)\(([^)]*)\)/);
-      if (!patternMol || !speciesMol) {
-        return patternMolStr === speciesMolStr;
-      }
-
-      if (patternMol[1] !== speciesMol[1]) return false;
-
-      const patternComponents = splitComponents(patternMol[2]);
-      const speciesComponents = splitComponents(speciesMol[2]);
-
-      return patternComponents.every((patternComponent) => {
-        const patternBase = componentBase(patternComponent);
-        return speciesComponents.some((speciesComponent) => {
-          const speciesBase = componentBase(speciesComponent);
-          if (patternBase !== speciesBase) return false;
-          if (patternComponent.includes('~') || patternComponent.includes('!')) {
-            return patternComponent === speciesComponent;
-          }
-          if (speciesComponent.includes('!')) {
-            return false;
-          }
-          return true;
-        });
-      });
-    };
-
-    const patternHasComplex = pattern.includes('.');
-    const speciesHasComplex = speciesName.includes('.');
-
-    if (patternHasComplex) {
-      const patternMolecules = pattern.split('.').map((value) => trim(value));
-      if (!speciesHasComplex) return false;
-      const speciesMolecules = speciesName.split('.').map((value) => trim(value));
-      if (patternMolecules.length !== speciesMolecules.length) return false;
-      for (let index = 0; index < patternMolecules.length; index += 1) {
-        if (!matchesSingleMolecule(patternMolecules[index], speciesMolecules[index])) return false;
-      }
-      return true;
-    }
-
-    if (speciesHasComplex) {
-      const speciesMolecules = speciesName.split('.').map((value) => trim(value));
-      return speciesMolecules.some((molecule) => matchesSingleMolecule(pattern, molecule));
-    }
-
-    return matchesSingleMolecule(pattern, speciesName);
-  };
-
-  const applyUnimolecularProductToSpecies = (reactantName: string, productPattern: string): string | null => {
-    if (!reactantName || !productPattern || productPattern.includes('.')) return null;
-
-    const productMatch = productPattern.match(/^([A-Za-z0-9_]+)\(([^)]*)\)$/);
-    if (!productMatch) return null;
-
-    const productMoleculeName = productMatch[1];
-    const productComponents = splitComponents(productMatch[2]);
-    const molecules = reactantName.split('.').map((value) => trim(value));
-    let replaced = false;
-
-    const newMolecules = molecules.map((molecule) => {
-      const moleculeMatch = molecule.match(/^([A-Za-z0-9_]+)\(([^)]*)\)$/);
-      if (!moleculeMatch || moleculeMatch[1] !== productMoleculeName) return molecule;
-
-      const reactantComponents = splitComponents(moleculeMatch[2]);
-      const componentMap: Record<string, string> = {};
-      reactantComponents.forEach((component) => {
-        componentMap[componentBase(component)] = component;
-      });
-      productComponents.forEach((component) => {
-        componentMap[componentBase(component)] = component;
-      });
-
-      const finalComponents: string[] = [];
-      reactantComponents.forEach((component) => {
-        const base = componentBase(component);
-        if (Object.prototype.hasOwnProperty.call(componentMap, base)) {
-          finalComponents.push(componentMap[base]);
-          delete componentMap[base];
-        } else {
-          finalComponents.push(component);
-        }
-      });
-
-      Object.keys(componentMap).forEach((base) => {
-        finalComponents.push(componentMap[base]);
-      });
-
-      replaced = true;
-      return `${productMoleculeName}(${finalComponents.join(',')})`;
-    });
-
-    if (!replaced) return null;
-    return newMolecules.join('.');
-  };
-
-  const generateCombinations = (arrays: BNGLSpecies[][], index = 0, current: BNGLSpecies[] = []) => {
-    if (index === arrays.length) return [current];
-    const results: BNGLSpecies[][] = [];
-    const level = arrays[index] ?? [];
-    for (let levelIndex = 0; levelIndex < level.length; levelIndex += 1) {
-      const item = level[levelIndex];
-      const newCurrent = current.concat([item]);
-      const combos = generateCombinations(arrays, index + 1, newCurrent);
-      for (let comboIndex = 0; comboIndex < combos.length; comboIndex += 1) {
-        results.push(combos[comboIndex]);
-      }
-    }
-    return results;
-  };
-
-  const rules = JSON.parse(JSON.stringify(model.reactions)) as BNGLModel['reactions'];
-  const speciesMap = new Map<string, BNGLSpecies>(model.species.map((species) => [species.name, { ...species }]));
-  const expandedReactionMap = new Map<string, BNGLModel['reactions'][number]>();
-
-  let speciesAdded = true;
-
-  while (speciesAdded) {
-    ensureNotCancelled(jobId);
-    speciesAdded = false;
-    const speciesArray = Array.from(speciesMap.values());
-
-    for (const rule of rules) {
-      ensureNotCancelled(jobId);
-      const reactantMatches = rule.reactants.map((reactantPattern) => {
-        const matches = speciesArray.filter((species) => patternMatchesSpecies(reactantPattern, species.name));
-        if (matches.length === 0 && (reactantPattern.includes('!') || reactantPattern.includes('.'))) {
-          return [{ name: reactantPattern, initialConcentration: 0 } as BNGLSpecies];
-        }
-        return matches;
-      });
-
-      if (reactantMatches.some((match) => match.length === 0)) {
-        continue;
-      }
-
-      const combinations = generateCombinations(reactantMatches);
-
-      combinations.forEach((reactantSpecies) => {
-        ensureNotCancelled(jobId);
-        const concreteReaction = {
-          reactants: reactantSpecies.map((species) => species.name),
-          products: rule.products.map((productPattern) => {
-            if (rule.reactants.length === 1 && rule.products.length === 1 && reactantSpecies.length === 1) {
-              const updated = applyUnimolecularProductToSpecies(reactantSpecies[0].name, productPattern);
-              if (updated) {
-                return updated;
-              }
-            }
-
-            if (productPattern.includes('(')) {
-              const productMolecules = productPattern.split('.');
-              const newProductMolecules = productMolecules.map((productMolecule) => {
-                const productMoleculeMatch = productMolecule.match(/^([A-Za-z0-9_]+)\(([^)]*)\)/);
-                if (!productMoleculeMatch) return productMolecule;
-
-                const productMoleculeName = productMoleculeMatch[1];
-                const productComponents = productMoleculeMatch[2];
-
-                let matchingReactant = reactantSpecies.find((species) => species.name.startsWith(`${productMoleculeName}(`));
-                if (!matchingReactant) {
-                  for (const species of reactantSpecies) {
-                    if (species.name.includes('.')) {
-                      const molecules = species.name.split('.');
-                      const foundMolecule = molecules.find((molecule) => molecule.startsWith(`${productMoleculeName}(`));
-                      if (foundMolecule) {
-                        matchingReactant = { name: foundMolecule, initialConcentration: species.initialConcentration };
-                        break;
-                      }
-                    }
-                  }
-                }
-
-                if (matchingReactant) {
-                  const reactantMatch = matchingReactant.name.match(/^([A-Za-z0-9_]+)\(([^)]*)\)/);
-                  if (reactantMatch) {
-                    const reactantComponents = reactantMatch[2].split(',').map((component) => component.trim()).filter(Boolean);
-                    const productComponentList = productComponents.split(',').map((component) => component.trim()).filter(Boolean);
-                    const compBase = (component: string) => component.split('~')[0].split('!')[0];
-                    const newComponentList = productComponentList.slice();
-
-                    const specifiedBases = productComponentList.reduce<Record<string, string>>((map, component) => {
-                      map[compBase(component)] = component;
-                      return map;
-                    }, {});
-
-                    reactantComponents.forEach((reactantComponent) => {
-                      const reactantBase = compBase(reactantComponent);
-                      if (!Object.prototype.hasOwnProperty.call(specifiedBases, reactantBase)) {
-                        const alreadyPresent = newComponentList.some((component) => compBase(component) === reactantBase);
-                        if (!alreadyPresent) {
-                          newComponentList.push(reactantComponent);
-                        }
-                      }
-                    });
-
-                    return `${productMoleculeName}(${newComponentList.join(',')})`;
-                  }
-                }
-
-                return productMolecule;
-              });
-
-              return newProductMolecules.join('.');
-            }
-
-            return productPattern;
-          }),
-          rate: rule.rate,
-          rateConstant: rule.rateConstant,
-        } satisfies BNGLModel['reactions'][number];
-
-        const cacheKey = JSON.stringify({
-          reactants: concreteReaction.reactants,
-          products: concreteReaction.products,
-          rate: concreteReaction.rate,
-          rateConstant: concreteReaction.rateConstant,
-        });
-
-        if (!expandedReactionMap.has(cacheKey)) {
-          expandedReactionMap.set(cacheKey, concreteReaction);
-        }
-
-        concreteReaction.products.forEach((productPattern) => {
-          const completed = completeSpeciesName(productPattern);
-          if (!speciesMap.has(completed)) {
-            speciesMap.set(completed, { name: completed, initialConcentration: 0 });
-            speciesAdded = true;
-          }
-        });
-      });
-    }
-  }
-
-  model.reactions = Array.from(expandedReactionMap.values());
-  model.species = Array.from(speciesMap.values());
-
-  const speciesList = model.species.map((species) => species.name);
-
-  for (const reaction of model.reactions) {
-    ensureNotCancelled(jobId);
-    reaction.reactants = reaction.reactants.map((reactant) => {
-      const completed = completeSpeciesName(reactant);
-      if (speciesList.includes(completed)) return completed;
-      if (speciesList.includes(reactant)) return reactant;
-      const found = speciesList.find((species) => patternMatchesSpecies(completed, species) || patternMatchesSpecies(reactant, species));
-      if (found && found !== reactant) {
-        return found;
-      }
-      return completed !== reactant ? completed : reactant;
-    });
-    reaction.products = reaction.products.map((product) => {
-      if (speciesList.includes(product)) return product;
-      const found = speciesList.find((species) => patternMatchesSpecies(product, species));
-      if (found && found !== product) {
-        return found;
-      }
-      return product;
-    });
-  }
-
-  const allProductSpecies = new Set<string>();
-  for (const reaction of model.reactions) {
-    ensureNotCancelled(jobId);
-    reaction.products.forEach((product) => {
-      const completed = completeSpeciesName(product);
-      allProductSpecies.add(completed);
-      reaction.products = reaction.products.map((existingProduct) => (existingProduct === product ? completed : existingProduct));
-    });
-  }
-
-  const speciesNames = new Set(model.species.map((species) => species.name));
-  for (const name of allProductSpecies) {
-    ensureNotCancelled(jobId);
-    if (!speciesNames.has(name)) {
-      model.species.push({ name, initialConcentration: 0 });
-      speciesNames.add(name);
-    }
-  }
-
-  return model;
+  return inputModel; 
 }
 
 async function generateExpandedNetwork(jobId: number, inputModel: BNGLModel): Promise<BNGLModel> {
@@ -512,22 +293,29 @@ async function generateExpandedNetwork(jobId: number, inputModel: BNGLModel): Pr
 
   // Convert BNGLModel to graph structures
   const seedSpecies = inputModel.species.map(s => {
-    console.log('[generateNetwork] parsing seed:', s.name);
     const graph = BNGLParser.parseSpeciesGraph(s.name);
-    console.log('[generateNetwork] parsed graph =>', BNGLParser.speciesGraphToString(graph));
     return graph;
+  });
+
+  // FIX: Create a map of CANONICAL seed species names to concentrations
+  const seedConcentrationMap = new Map<string, number>();
+  inputModel.species.forEach(s => {
+      const g = BNGLParser.parseSpeciesGraph(s.name);
+      const canonicalName = GraphCanonicalizer.canonicalize(g);
+      seedConcentrationMap.set(canonicalName, s.initialConcentration);
   });
 
   const formatSpeciesList = (list: string[]) => (list.length > 0 ? list.join(' + ') : '0');
 
   const rules = inputModel.reactionRules.flatMap(r => {
-    const rate = inputModel.parameters[r.rate] ?? parseFloat(r.rate);
-    const reverseRate = r.reverseRate ? (inputModel.parameters[r.reverseRate] ?? parseFloat(r.reverseRate)) : rate;
+    const parametersMap = new Map(Object.entries(inputModel.parameters));
+    const rate = BNGLParser.evaluateExpression(r.rate, parametersMap);
+    const reverseRate = r.reverseRate ? BNGLParser.evaluateExpression(r.reverseRate, parametersMap) : rate;
+    
     const ruleStr = `${formatSpeciesList(r.reactants)} -> ${formatSpeciesList(r.products)}`;
     const forwardRule = BNGLParser.parseRxnRule(ruleStr, rate);
     forwardRule.name = r.reactants.join('+') + '->' + r.products.join('+');
 
-    // Apply constraints if present
     if (r.constraints && r.constraints.length > 0) {
       forwardRule.applyConstraints(r.constraints, (s) => BNGLParser.parseSpeciesGraph(s));
     }
@@ -542,26 +330,25 @@ async function generateExpandedNetwork(jobId: number, inputModel: BNGLModel): Pr
     }
   });
 
-  // Use the new NetworkGenerator
-  const generator = new NetworkGenerator({ maxSpecies: 10000, maxIterations: 100 });
+  // INCREASED LIMITS for complex models
+  const generator = new NetworkGenerator({ maxSpecies: 20000, maxIterations: 5000 });
   const result = await generator.generate(seedSpecies, rules);
 
   console.log('[Worker] Network generation complete. Generated', result.species.length, 'species and', result.reactions.length, 'reactions');
 
-  // Convert result back to BNGLModel
   const generatedModel: BNGLModel = {
     ...inputModel,
     species: result.species.map((s: Species) => {
-      const name = BNGLParser.speciesGraphToString(s.graph);
-      // Find the original concentration if this species existed in the input
-      const originalSpecies = inputModel.species.find(orig => orig.name === name);
-      const concentration = originalSpecies ? originalSpecies.initialConcentration : (s.concentration || 0);
-      return { name, initialConcentration: concentration };
+      // Use canonical string for the generated species name
+      const canonicalName = GraphCanonicalizer.canonicalize(s.graph);
+      // Look up concentration using canonical name
+      const concentration = seedConcentrationMap.get(canonicalName) || (s.concentration || 0);
+      return { name: canonicalName, initialConcentration: concentration };
     }),
     reactions: result.reactions.map((r: Rxn) => {
       const reaction = {
-        reactants: r.reactants.map((idx: number) => BNGLParser.speciesGraphToString(result.species[idx].graph)),
-        products: r.products.map((idx: number) => BNGLParser.speciesGraphToString(result.species[idx].graph)),
+        reactants: r.reactants.map((idx: number) => GraphCanonicalizer.canonicalize(result.species[idx].graph)),
+        products: r.products.map((idx: number) => GraphCanonicalizer.canonicalize(result.species[idx].graph)),
         rate: r.rate.toString(),
         rateConstant: r.rate
       };
@@ -575,421 +362,276 @@ async function generateExpandedNetwork(jobId: number, inputModel: BNGLModel): Pr
 async function simulate(jobId: number, inputModel: BNGLModel, options: SimulationOptions): Promise<SimulationResults> {
   ensureNotCancelled(jobId);
   console.log('[Worker] Starting simulation with', inputModel.species.length, 'species and', inputModel.reactions.length, 'reactions');
-  console.log('[Worker] Initial species:', inputModel.species.map(s => `${s.name}: ${s.initialConcentration}`));
-  console.log('[Worker] Observables:', inputModel.observables.map(o => `${o.name}: ${o.pattern}`));
 
-  // Use the new graph-based network generator instead of the old one
   const expandedModel = await generateExpandedNetwork(jobId, inputModel);
   console.log('[Worker] After network expansion:', expandedModel.species.length, 'species and', expandedModel.reactions.length, 'reactions');
-  console.log('[Worker] Expanded species:', expandedModel.species.map(s => `${s.name}: ${s.initialConcentration}`));
-  console.log('[Worker] Expanded reactions:', expandedModel.reactions.map(r => `${r.reactants.join(' + ')} -> ${r.products.join(' + ')} (rate: ${r.rateConstant})`));
 
   const model: BNGLModel = JSON.parse(JSON.stringify(expandedModel));
-
   const { t_end, n_steps, method } = options;
-  const speciesNames = model.species.map((species) => species.name);
-
   const headers = ['time', ...model.observables.map((observable) => observable.name)];
 
-  const evaluateObservables = (concs: Record<string, number>) => {
-    ensureNotCancelled(jobId);
-    const obsValues: Record<string, number> = {};
+  // --- OPTIMIZATION: Pre-process Network for Fast Simulation ---
+  
+  // 1. Map Species Names to Indices
+  const speciesMap = new Map<string, number>();
+  model.species.forEach((s, i) => speciesMap.set(s.name, i));
+  const numSpecies = model.species.length;
 
-    for (const obs of model.observables) {
-      ensureNotCancelled(jobId);
-      let total = 0;
-      const pattern = obs.pattern.trim();
+  // DEBUG: Log initial species
+  console.log('[Worker] Total species:', numSpecies);
+  model.species.slice(0, 5).forEach((s, i) => console.log(`[Worker] Species ${i}: ${s.name} (conc=${s.initialConcentration})`));
 
-      for (const [speciesName, concentration] of Object.entries(concs)) {
-        ensureNotCancelled(jobId);
-        const speciesStr = speciesName.trim();
-
-        if (speciesStr === pattern) {
-          total += concentration;
-          continue;
-        }
-
-        if (pattern.includes('!+')) {
-          const patternMol = pattern.match(/^([A-Za-z0-9_]+)\(([^)]+)\)/);
-          if (patternMol) {
-            const molName = patternMol[1];
-            const componentWithWildcard = patternMol[2];
-            const componentName = componentWithWildcard.split('!')[0];
-
-            if (speciesStr.includes(`${molName}(`)) {
-              const molRegex = new RegExp(`${molName}\\(([^)]*)\\)`);
-              const molMatch = speciesStr.match(molRegex);
-              if (molMatch) {
-                const molComponents = molMatch[1];
-                const componentRegex = new RegExp(`${componentName}!`);
-                if (componentRegex.test(molComponents)) {
-                  total += concentration;
-                }
-              }
-            }
-          }
-          continue;
-        }
-
-        if (pattern.includes('!') && !pattern.includes('!+')) {
-          if (speciesStr === pattern) {
-            total += concentration;
-          }
-          continue;
-        }
-
-        if (pattern.includes('(')) {
-          // Handle complex patterns (molecules connected with dots)
-          if (pattern.includes('.')) {
-            // Split complex pattern into individual molecules
-            const patternMolecules = pattern.split('.').map(s => s.trim());
-            const speciesMolecules = speciesStr.split('.').map(s => s.trim());
-
-            if (patternMolecules.length === speciesMolecules.length) {
-              const allMatch = patternMolecules.every((patMol, idx) => {
-                const specMol = speciesMolecules[idx];
-                const patMatch = patMol.match(/^([A-Za-z0-9_]+)\(([^)]*)\)/);
-                const specMatch = specMol.match(/^([A-Za-z0-9_]+)\(([^)]*)\)/);
-
-                if (!patMatch || !specMatch) {
-                  return patMol === specMol;
-                }
-
-                if (patMatch[1] !== specMatch[1]) return false;
-
-                const patComps = patMatch[2].split(',').map(s => s.trim()).filter(Boolean);
-                const specComps = specMatch[2].split(',').map(s => s.trim()).filter(Boolean);
-
-                return patComps.every(patComp => {
-                  const patBase = patComp.split('~')[0].split('!')[0];
-                  const stateReq = patComp.includes('~') ? patComp.split('~')[1].split('!')[0] : null;
-                  const bondReq = patComp.includes('!') ? patComp.split('!')[1] : null;
-
-                  return specComps.some(specComp => {
-                    const specBase = specComp.split('~')[0].split('!')[0];
-                    if (specBase !== patBase) return false;
-
-                    if (stateReq && !specComp.includes(`~${stateReq}`)) return false;
-                    if (bondReq && !specComp.includes(`!${bondReq}`)) return false;
-
-                    return true;
-                  });
-                });
-              });
-
-              if (allMatch) {
-                total += concentration;
-              }
-            }
-          } else {
-            // Single molecule pattern
-            const molMatch = pattern.match(/^([A-Za-z0-9_]+)\(([^)]*)\)/);
-            if (molMatch) {
-              const molName = molMatch[1];
-              const componentSpec = molMatch[2].trim();
-
-              if (speciesStr.includes(`${molName}(`)) {
-                const molRegex = new RegExp(`${molName}\\(([^)]*)\\)`);
-                const molMatchResult = speciesStr.match(molRegex);
-                if (molMatchResult) {
-                  const speciesComponents = molMatchResult[1]
-                    .split(',')
-                    .map((part) => part.trim())
-                    .filter(Boolean);
-
-                  const requiredComponents = componentSpec
-                    ? componentSpec.split(',').map((part) => part.trim()).filter(Boolean)
-                    : [];
-
-                  const satisfiesComponents = requiredComponents.every((reqComp) => {
-                    const compBase = reqComp.split('~')[0].split('!')[0];
-                    const stateRequired = reqComp.includes('~') ? reqComp.split('~')[1].split('!')[0] : null;
-                    const bondRequired = reqComp.includes('!') ? reqComp.split('!')[1] : null;
-                    const requiresUnbound = reqComp.length > 0 && !reqComp.includes('!') && !reqComp.includes('~');
-
-                    return speciesComponents.some((specComp) => {
-                      const specBase = specComp.split('~')[0].split('!')[0];
-                      if (specBase !== compBase) return false;
-
-                      if (stateRequired && !specComp.includes(`~${stateRequired}`)) {
-                        return false;
-                      }
-
-                      if (requiresUnbound && specComp.includes('!')) {
-                        return false;
-                      }
-
-                      if (bondRequired && !specComp.includes(`!${bondRequired}`)) {
-                        return false;
-                      }
-
-                      return true;
-                    });
-                  });
-
-                  if (satisfiesComponents || requiredComponents.length === 0) {
-                    total += concentration;
-                  }
-                }
-              }
-            }
-          }
-        } else if (speciesStr === pattern) {
-          total += concentration;
-        }
+  // 2. Pre-process Reactions into Concrete Indices
+  const concreteReactions = model.reactions.map(r => {
+      const reactantIndices = r.reactants.map(name => speciesMap.get(name));
+      const productIndices = r.products.map(name => speciesMap.get(name));
+      
+      if (reactantIndices.some(i => i === undefined) || productIndices.some(i => i === undefined)) {
+          return null;
       }
 
-      obsValues[obs.name] = total;
-    }
-    return obsValues;
-  };
+      return {
+          reactants: new Int32Array(reactantIndices as number[]),
+          products: new Int32Array(productIndices as number[]),
+          rateConstant: r.rateConstant
+      };
+  }).filter(r => r !== null) as { reactants: Int32Array, products: Int32Array, rateConstant: number }[];
+
+  // DEBUG: Log reactions
+  console.log('[Worker] Total reactions:', concreteReactions.length);
+  concreteReactions.slice(0, 5).forEach((r, i) => console.log(`[Worker] Rxn ${i}: k=${r.rateConstant} reactants=[${r.reactants}] products=[${r.products}]`));
+
+  // 3. Pre-process Observables (Cache matching species indices and coefficients)
+  const concreteObservables = model.observables.map(obs => {
+      // Split pattern by whitespace to handle multiple patterns (e.g. "A B")
+      const patterns = obs.pattern.split(/\s+/).filter(p => p.length > 0);
+      const matchingIndices: number[] = [];
+      const coefficients: number[] = [];
+      
+      model.species.forEach((s, i) => {
+          let count = 0;
+          for (const pat of patterns) {
+              if (obs.type === 'species') {
+                  if (isSpeciesMatch(s.name, pat)) {
+                      count = 1;
+                      break; // Species matches once
+                  }
+              } else {
+                  // Molecules observable: count occurrences
+                  count += countPatternMatches(s.name, pat);
+              }
+          }
+          
+          if (count > 0) {
+              matchingIndices.push(i);
+              coefficients.push(count);
+          }
+      });
+      return {
+          name: obs.name,
+          indices: new Int32Array(matchingIndices),
+          coefficients: new Float64Array(coefficients)
+      };
+  });
+
+  // DEBUG: Log observables
+  concreteObservables.forEach(obs => {
+      console.log(`[Worker] Observable ${obs.name} matches ${obs.indices.length} species`);
+      if (obs.indices.length === 0) console.warn(`[Worker] WARNING: Observable ${obs.name} matches NO species`);
+  });
+
+  // 4. Initialize State Vector (Float64Array for speed)
+  const state = new Float64Array(numSpecies);
+  model.species.forEach((s, i) => state[i] = s.initialConcentration);
+
+  // DEBUG: Check initial state
+  let totalConc = 0;
+  for(let i=0; i<numSpecies; i++) totalConc += state[i];
+  console.log('[Worker] Total initial concentration:', totalConc);
 
   const data: Record<string, number>[] = [];
 
+  // --- Fast Observable Evaluator ---
+  const evaluateObservablesFast = (currentState: Float64Array) => {
+      const obsValues: Record<string, number> = {};
+      for (let i = 0; i < concreteObservables.length; i++) {
+          const obs = concreteObservables[i];
+          let sum = 0;
+          for (let j = 0; j < obs.indices.length; j++) {
+              sum += currentState[obs.indices[j]] * obs.coefficients[j];
+          }
+          obsValues[obs.name] = sum;
+      }
+      return obsValues;
+  };
+
+  // Define checkCancelled helper
+  const checkCancelled = () => ensureNotCancelled(jobId);
+
   if (method === 'ssa') {
-    let counts = Object.fromEntries(model.species.map((s) => [s.name, Math.round(s.initialConcentration)])) as Record<
-      string,
-      number
-    >;
+    // SSA Implementation using Typed Arrays
+    // Round initial state for SSA
+    for(let i=0; i<numSpecies; i++) state[i] = Math.round(state[i]);
+    
     const dtOut = t_end / n_steps;
     let t = 0;
     let nextTOut = 0;
 
-    data.push({ time: t, ...evaluateObservables(counts) });
+    data.push({ time: t, ...evaluateObservablesFast(state) });
 
     while (t < t_end) {
-      ensureNotCancelled(jobId);
-      const propensities: number[] = [];
-      for (const reaction of model.reactions) {
-        ensureNotCancelled(jobId);
-        let a = reaction.rateConstant;
-        for (const reactant of reaction.reactants) {
-          const count = counts[reactant];
-          if (count === undefined) {
-            console.warn('[SSA] Missing reactant in counts:', reactant, 'Available:', Object.keys(counts));
+      checkCancelled();
+      
+      // Calculate propensities
+      let aTotal = 0;
+      const propensities = new Float64Array(concreteReactions.length);
+      
+      for (let i = 0; i < concreteReactions.length; i++) {
+          const rxn = concreteReactions[i];
+          let a = rxn.rateConstant;
+          for (let j = 0; j < rxn.reactants.length; j++) {
+              a *= state[rxn.reactants[j]];
           }
-          a *= count || 0;
-        }
-        propensities.push(a);
+          propensities[i] = a;
+          aTotal += a;
       }
 
-      const aTotal = propensities.reduce((sum, a) => sum + a, 0);
-      if (aTotal === 0) {
-        break;
-      }
+      if (aTotal === 0) break;
 
       const r1 = Math.random();
       const tau = (1 / aTotal) * Math.log(1 / r1);
-
       t += tau;
 
       const r2 = Math.random() * aTotal;
       let sumA = 0;
       let reactionIndex = propensities.length - 1;
-      for (let j = 0; j < propensities.length; j += 1) {
-        ensureNotCancelled(jobId);
-        sumA += propensities[j];
-        if (r2 <= sumA) {
-          reactionIndex = j;
-          break;
-        }
+      
+      for (let i = 0; i < propensities.length; i++) {
+          sumA += propensities[i];
+          if (r2 <= sumA) {
+              reactionIndex = i;
+              break;
+          }
       }
 
-      const firedReaction = model.reactions[reactionIndex];
-      for (const reactant of firedReaction.reactants) {
-        const before = counts[reactant] || 0;
-        counts[reactant] = before - 1;
-      }
-      for (const product of firedReaction.products) {
-        const before = counts[product] || 0;
-        counts[product] = before + 1;
-      }
+      const firedRxn = concreteReactions[reactionIndex];
+      for (let j = 0; j < firedRxn.reactants.length; j++) state[firedRxn.reactants[j]]--;
+      for (let j = 0; j < firedRxn.products.length; j++) state[firedRxn.products[j]]++;
 
       while (t >= nextTOut && nextTOut <= t_end) {
-        ensureNotCancelled(jobId);
-        data.push({ time: Math.round(nextTOut * 1e10) / 1e10, ...evaluateObservables(counts) });
+        checkCancelled();
+        data.push({ time: Math.round(nextTOut * 1e10) / 1e10, ...evaluateObservablesFast(state) });
         nextTOut += dtOut;
       }
     }
-
+    
+    // Fill remaining steps
     while (nextTOut <= t_end) {
-      ensureNotCancelled(jobId);
-      data.push({ time: Math.round(nextTOut * 1e10) / 1e10, ...evaluateObservables(counts) });
-      nextTOut += dtOut;
+        data.push({ time: Math.round(nextTOut * 1e10) / 1e10, ...evaluateObservablesFast(state) });
+        nextTOut += dtOut;
     }
 
     return { headers, data } satisfies SimulationResults;
   }
 
   if (method === 'ode') {
-    let y = model.species.map((s) => s.initialConcentration);
-
-    const checkCancelled = () => ensureNotCancelled(jobId);
-
-    const matchSpeciesPattern = (pattern: string, speciesName: string) => {
-      checkCancelled();
-      if (pattern === speciesName) return true;
-
-      const splitComponents = (input: string) =>
-        input
-          .split(',')
-          .map((part) => part.trim())
-          .filter(Boolean);
-
-      const componentBase = (comp: string) => comp.split('~')[0].split('!')[0];
-      const trim = (value: string) => value.trim();
-
-      const matchesSingleMolecule = (patternMolStr: string, speciesMolStr: string) => {
-        const patternMol = patternMolStr.match(/^([A-Za-z0-9_]+)\(([^)]*)\)/);
-        const speciesMol = speciesMolStr.match(/^([A-Za-z0-9_]+)\(([^)]*)\)/);
-        if (!patternMol || !speciesMol) {
-          return patternMolStr === speciesMolStr;
-        }
-
-        if (patternMol[1] !== speciesMol[1]) return false;
-
-        const patternComps = splitComponents(patternMol[2]);
-        const speciesComps = splitComponents(speciesMol[2]);
-
-        return patternComps.every((pComp) => {
-          const pBase = componentBase(pComp);
-          return speciesComps.some((sComp) => {
-            const sBase = componentBase(sComp);
-            if (pBase !== sBase) return false;
-            if (pComp.includes('~') || pComp.includes('!')) {
-              return pComp === sComp;
+    // OPTIMIZATION: JIT Compile Derivative Function
+    // This avoids array iteration overhead in the hot loop
+    const buildDerivativesFunction = () => {
+        const lines: string[] = [];
+        lines.push('var v;');
+        
+        for (let i = 0; i < concreteReactions.length; i++) {
+            const rxn = concreteReactions[i];
+            let term = `${rxn.rateConstant}`;
+            for (let j = 0; j < rxn.reactants.length; j++) {
+                term += ` * y[${rxn.reactants[j]}]`;
             }
-            if (sComp.includes('!')) {
-              return false;
+            lines.push(`v = ${term};`);
+            
+            for (let j = 0; j < rxn.reactants.length; j++) {
+                lines.push(`dydt[${rxn.reactants[j]}] -= v;`);
             }
-            return true;
-          });
-        });
-      };
-
-      const patternHasComplex = pattern.includes('.');
-      const speciesHasComplex = speciesName.includes('.');
-
-      if (patternHasComplex) {
-        const patternMolecules = pattern.split('.').map((value) => trim(value));
-        if (!speciesHasComplex) return false;
-        const speciesMolecules = speciesName.split('.').map((value) => trim(value));
-        if (patternMolecules.length !== speciesMolecules.length) return false;
-        for (let idx = 0; idx < patternMolecules.length; idx += 1) {
-          if (!matchesSingleMolecule(patternMolecules[idx], speciesMolecules[idx])) return false;
+            for (let j = 0; j < rxn.products.length; j++) {
+                lines.push(`dydt[${rxn.products[j]}] += v;`);
+            }
         }
-        return true;
-      }
-
-      if (speciesHasComplex) {
-        const speciesMolecules = speciesName.split('.').map((value) => trim(value));
-        return speciesMolecules.some((molecule) => matchesSingleMolecule(pattern, molecule));
-      }
-
-      return matchesSingleMolecule(pattern, speciesName);
+        
+        return new Function('y', 'dydt', lines.join('\n'));
     };
 
-    const derivatives = (yIn: number[], logStep?: boolean) => {
-      checkCancelled();
-      const rates: Record<string, number> = {};
-      speciesNames.forEach((name, i) => {
-        rates[name] = yIn[i];
-      });
-      const dydt = new Array<number>(speciesNames.length).fill(0);
-
-      model.reactions.forEach((reaction) => {
-        checkCancelled();
-        const hasExactMatch = reaction.reactants.every((reactant) => speciesNames.includes(reactant));
-
-        if (hasExactMatch) {
-          let velocity = reaction.rateConstant;
-          reaction.reactants.forEach((reactant) => {
-            velocity *= rates[reactant] || 0;
-          });
-
-          reaction.reactants.forEach((reactant) => {
-            const rIdx = speciesNames.indexOf(reactant);
-            if (rIdx !== -1) dydt[rIdx] -= velocity;
-          });
-          reaction.products.forEach((product) => {
-            const pIdx = speciesNames.indexOf(product);
-            if (pIdx !== -1) {
-              dydt[pIdx] += velocity;
-            } else {
-              for (let idx = 0; idx < speciesNames.length; idx += 1) {
-                if (matchSpeciesPattern(product, speciesNames[idx])) {
-                  dydt[idx] += velocity;
-                  break;
+    // Fallback to loop if too many reactions (to avoid stack overflow or huge function size)
+    let derivatives: (y: Float64Array, dydt: Float64Array) => void;
+    if (concreteReactions.length < 2000) {
+        try {
+            // @ts-ignore
+            derivatives = buildDerivativesFunction();
+        } catch (e) {
+            console.warn('[Worker] JIT compilation failed, falling back to loop', e);
+            derivatives = (yIn: Float64Array, dydt: Float64Array) => {
+                dydt.fill(0);
+                for (let i = 0; i < concreteReactions.length; i++) {
+                    const rxn = concreteReactions[i];
+                    let velocity = rxn.rateConstant;
+                    for (let j = 0; j < rxn.reactants.length; j++) {
+                        velocity *= yIn[rxn.reactants[j]];
+                    }
+                    for (let j = 0; j < rxn.reactants.length; j++) dydt[rxn.reactants[j]] -= velocity;
+                    for (let j = 0; j < rxn.products.length; j++) dydt[rxn.products[j]] += velocity;
                 }
-              }
-            }
-          });
-        } else {
-          const matchedSpecies = reaction.reactants.map((reactantPattern) => {
-            const matches: { name: string; idx: number }[] = [];
-            speciesNames.forEach((speciesName, idx) => {
-              if (matchSpeciesPattern(reactantPattern, speciesName)) {
-                matches.push({ name: speciesName, idx });
-              }
-            });
-            return matches;
-          });
-
-          if (!matchedSpecies.every((m) => m.length === 1)) {
-            return;
-          }
-
-          let velocity = reaction.rateConstant;
-          matchedSpecies.forEach((matches) => {
-            velocity *= rates[matches[0].name] || 0;
-          });
-
-          if (velocity === 0) return;
-
-          matchedSpecies.forEach((matches) => {
-            dydt[matches[0].idx] -= velocity;
-          });
-
-          reaction.products.forEach((productPattern) => {
-            const pIdx = speciesNames.indexOf(productPattern);
-            if (pIdx !== -1) {
-              dydt[pIdx] += velocity;
-            } else {
-              for (let idx = 0; idx < speciesNames.length; idx += 1) {
-                if (matchSpeciesPattern(productPattern, speciesNames[idx])) {
-                  dydt[idx] += velocity;
-                  break;
-                }
-              }
-            }
-          });
+            };
         }
-      });
+    } else {
+        derivatives = (yIn: Float64Array, dydt: Float64Array) => {
+            dydt.fill(0);
+            for (let i = 0; i < concreteReactions.length; i++) {
+                const rxn = concreteReactions[i];
+                let velocity = rxn.rateConstant;
+                for (let j = 0; j < rxn.reactants.length; j++) {
+                    velocity *= yIn[rxn.reactants[j]];
+                }
+                for (let j = 0; j < rxn.reactants.length; j++) dydt[rxn.reactants[j]] -= velocity;
+                for (let j = 0; j < rxn.products.length; j++) dydt[rxn.products[j]] += velocity;
+            }
+        };
+    }
 
-      return dydt;
-    };
+    const rk4Step = (yCurr: Float64Array, h: number, yNext: Float64Array) => {
+        const n = yCurr.length;
+        // Allocate temp arrays once outside if possible, but here inside is safer for now
+        // Optimization: reuse buffers passed in context if we refactor
+        const k1 = new Float64Array(n);
+        const k2 = new Float64Array(n);
+        const k3 = new Float64Array(n);
+        const k4 = new Float64Array(n);
+        const temp = new Float64Array(n);
 
-    const rk4Step = (yCurr: number[], h: number, logStep?: boolean) => {
-      checkCancelled();
-      const k1 = derivatives(yCurr, logStep);
-      const yK1 = yCurr.map((yi, i) => yi + 0.5 * h * k1[i]);
-      const k2 = derivatives(yK1);
-      const yK2 = yCurr.map((yi, i) => yi + 0.5 * h * k2[i]);
-      const k3 = derivatives(yK2);
-      const yK3 = yCurr.map((yi, i) => yi + h * k3[i]);
-      const k4 = derivatives(yK3);
-      const yNext = yCurr.map((yi, i) => yi + (h / 6) * (k1[i] + 2 * k2[i] + 2 * k3[i] + k4[i]));
-      return yNext.map((val) => Math.max(0, val));
+        // k1
+        dydt.fill(0); // Reset global dydt buffer if used, but here we use local k1
+        derivatives(yCurr, k1);
+        
+        // k2
+        for(let i=0; i<n; i++) temp[i] = yCurr[i] + 0.5 * h * k1[i];
+        derivatives(temp, k2);
+
+        // k3
+        for(let i=0; i<n; i++) temp[i] = yCurr[i] + 0.5 * h * k2[i];
+        derivatives(temp, k3);
+
+        // k4
+        for(let i=0; i<n; i++) temp[i] = yCurr[i] + h * k3[i];
+        derivatives(temp, k4);
+
+        for(let i=0; i<n; i++) {
+            yNext[i] = yCurr[i] + (h / 6) * (k1[i] + 2 * k2[i] + 2 * k3[i] + k4[i]);
+            if (yNext[i] < 0) yNext[i] = 0; // Clamp to 0
+        }
     };
 
     const dtOut = t_end / n_steps;
     let t = 0;
-
-    const currentConcs: Record<string, number> = {};
-    speciesNames.forEach((name, i) => {
-      currentConcs[name] = y[i];
-    });
-    data.push({ time: t, ...evaluateObservables(currentConcs) });
+    
+    data.push({ time: t, ...evaluateObservablesFast(state) });
 
     const tolerance = options.steadyStateTolerance ?? 1e-6;
     const window = options.steadyStateWindow ?? 5;
@@ -997,77 +639,82 @@ async function simulate(jobId: number, inputModel: BNGLModel, options: Simulatio
     let consecutiveStable = 0;
     let shouldStop = false;
 
+    // Reusable arrays for RK4
+    let y = new Float64Array(state);
+    let nextY = new Float64Array(numSpecies);
+    // Dummy dydt for JIT function if it expects a second arg (it does)
+    let dydt = new Float64Array(numSpecies); 
+
+    // DEBUG: Check derivatives at t=0
+    derivatives(y, dydt);
+    let maxDeriv = 0;
+    for(let i=0; i<numSpecies; i++) maxDeriv = Math.max(maxDeriv, Math.abs(dydt[i]));
+    console.log('[Worker] Max derivative at t=0:', maxDeriv);
+
+    // OPTIMIZATION: Relative Change Limiter for Step Size
+    // Instead of complex adaptive schemes, we limit step size so no species changes by >20%
+    
     for (let i = 1; i <= n_steps && !shouldStop; i += 1) {
       checkCancelled();
       const tTarget = i * dtOut;
-      const maxRate = model.reactions.reduce((max, rxn) => Math.max(max, rxn.rateConstant || 0), 0);
+      
+      while (t < tTarget - 1e-12) {
+          // Calculate derivatives at current state to estimate step size
+          derivatives(y, dydt); // dydt is reused buffer
 
-      const rateFactor = Math.max(1, maxRate * 100);
-      const subSteps = Math.max(10, Math.ceil(dtOut * 10 * rateFactor));
-      const baseStep = (tTarget - t) / subSteps;
-      let localTime = t;
-      let firstSubstep = true;
+          // Relative Change Limiter
+          let h = tTarget - t; // Default to finishing the step
+          const maxChange = 0.2; // 20%
+          const minConc = 1e-9; // Threshold below which we allow faster relative changes
+          const minStep = 1e-12;
 
-      while (localTime < tTarget - 1e-12) {
-        checkCancelled();
-        let stepSize = Math.min(baseStep, tTarget - localTime);
-        let attempts = 0;
-        let nextY: number[] | null = null;
-        const maxAdaptiveAttempts = 12;
-        const overflowThreshold = 1e12;
-
-        while (attempts < maxAdaptiveAttempts) {
-          checkCancelled();
-          const candidate = rk4Step(y, stepSize, firstSubstep && attempts === 0);
-
-          const hasOverflow = candidate.some((val) => !Number.isFinite(val) || Math.abs(val) > overflowThreshold);
-          if (!hasOverflow) {
-            nextY = candidate;
-            break;
+          for (let k = 0; k < numSpecies; k++) {
+              const deriv = Math.abs(dydt[k]);
+              if (deriv > 1e-12) { // Ignore negligible rates
+                  const conc = y[k];
+                  // If concentration is significant, limit relative change
+                  // If concentration is tiny, limit absolute change (e.g. don't jump from 0 to 100 in one step)
+                  const limit = Math.max(conc, minConc) * maxChange;
+                  const maxStep = limit / deriv;
+                  if (maxStep < h) h = maxStep;
+              }
           }
 
-          stepSize /= 2;
-          attempts += 1;
-          if (stepSize < 1e-12) {
-            break;
+          // Clamp step size
+          if (h < minStep) h = minStep;
+          
+          // Don't overshoot
+          if (t + h > tTarget) h = tTarget - t;
+
+          // Perform step
+          rk4Step(y, h, nextY);
+          
+          // Update
+          y.set(nextY);
+          t += h;
+          
+          // Check steady state
+          if (enforceSteadyState) {
+              let maxDelta = 0;
+              for(let k=0; k<numSpecies; k++) {
+                  const d = Math.abs(nextY[k] - y[k]);
+                  if (d > maxDelta) maxDelta = d;
+              }
+              if (maxDelta <= tolerance) {
+                  consecutiveStable++;
+                  if (consecutiveStable >= window) {
+                      shouldStop = true;
+                      break;
+                  }
+              } else {
+                  consecutiveStable = 0;
+              }
           }
-        }
-
-        if (!nextY) {
-          throw new Error(
-            'Simulation became unstable (adaptive RK4 step failed). Try adjusting parameters or using the SSA solver.'
-          );
-        }
-
-        const maxDelta = Math.max(...nextY.map((val, idx) => Math.abs(val - y[idx])));
-        y = nextY;
-        localTime += stepSize;
-        firstSubstep = false;
-
-        if (enforceSteadyState) {
-          if (maxDelta <= tolerance) {
-            consecutiveStable += 1;
-            if (consecutiveStable >= window) {
-              shouldStop = true;
-              break;
-            }
-          } else {
-            consecutiveStable = 0;
-          }
-        }
       }
 
-      t = localTime;
-      const stepConcs: Record<string, number> = {};
-      speciesNames.forEach((name, k) => {
-        stepConcs[name] = y[k];
-      });
-
-      data.push({ time: Math.round(t * 1e10) / 1e10, ...evaluateObservables(stepConcs) });
-
-      if (shouldStop) {
-        break;
-      }
+      data.push({ time: Math.round(t * 1e10) / 1e10, ...evaluateObservablesFast(y) });
+      
+      if (shouldStop) break;
     }
 
     return { headers, data } satisfies SimulationResults;
