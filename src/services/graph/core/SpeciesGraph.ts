@@ -1,5 +1,5 @@
 // graph/core/SpeciesGraph.ts
-import { Molecule } from './Molecule';
+import { Molecule } from './Molecule.ts';
 
 export class SpeciesGraph {
   molecules: Molecule[];
@@ -41,10 +41,10 @@ export class SpeciesGraph {
     // Update Component.edges for VF2 matching
     // FIX: Remove any existing "unresolved" edges that might have been set by parser
     if (compA.edges.has(label) && compA.edges.get(label) === -1) {
-        compA.edges.delete(label);
+      compA.edges.delete(label);
     }
     if (compB.edges.has(label) && compB.edges.get(label) === -1) {
-        compB.edges.delete(label);
+      compB.edges.delete(label);
     }
 
     compA.edges.set(label, comp2);
@@ -92,37 +92,37 @@ export class SpeciesGraph {
   deleteBond(mol: number, comp: number): void {
     const key = `${mol}.${comp}`;
     const partner = this.adjacency.get(key);
-    
+
     // 1. Remove forward link from adjacency
     this.adjacency.delete(key);
 
     // 2. Remove edge from this component
     const molecule = this.molecules[mol];
     if (molecule) {
-        const component = molecule.components[comp];
-        if (component) {
-            component.edges.clear();
-        }
+      const component = molecule.components[comp];
+      if (component) {
+        component.edges.clear();
+      }
     }
 
     // 3. Handle partner
     if (partner) {
-        // Only delete reverse link if it actually points back to us (reciprocity check)
-        if (this.adjacency.get(partner) === key) {
-            this.adjacency.delete(partner);
-        }
+      // Only delete reverse link if it actually points back to us (reciprocity check)
+      if (this.adjacency.get(partner) === key) {
+        this.adjacency.delete(partner);
+      }
 
-        // Clear partner component edges ONLY if they point to us
-        const [pMolStr, pCompStr] = partner.split('.');
-        const pMol = Number(pMolStr);
-        const pComp = Number(pCompStr);
-        const pMolecule = this.molecules[pMol];
-        if (pMolecule) {
-            const pComponent = pMolecule.components[pComp];
-            if (pComponent) {
-                pComponent.edges.clear();
-            }
+      // Clear partner component edges ONLY if they point to us
+      const [pMolStr, pCompStr] = partner.split('.');
+      const pMol = Number(pMolStr);
+      const pComp = Number(pCompStr);
+      const pMolecule = this.molecules[pMol];
+      if (pMolecule) {
+        const pComponent = pMolecule.components[pComp];
+        if (pComponent) {
+          pComponent.edges.clear();
         }
+      }
     }
 
     this.adjacencyBitset = undefined;
@@ -135,44 +135,44 @@ export class SpeciesGraph {
    */
   merge(other: SpeciesGraph): number {
     const offset = this.molecules.length;
-    
+
     // Clone and add molecules
     for (const mol of other.molecules) {
       this.molecules.push(mol.clone());
     }
-    
+
     // Rebuild adjacency for the new molecules based on the cloned components
     for (let i = 0; i < other.molecules.length; i++) {
-        const newMolIdx = offset + i;
-        const mol = this.molecules[newMolIdx];
-        
-        for (let c = 0; c < mol.components.length; c++) {
-            const comp = mol.components[c];
-            const newEdges = new Map<number, number>();
-            
-            for (const [label, targetCompIdx] of comp.edges.entries()) {
-                const oldKey = `${i}.${c}`;
-                const oldPartner = other.adjacency.get(oldKey);
-                if (oldPartner) {
-                    const [oldPartnerMol, oldPartnerComp] = oldPartner.split('.').map(Number);
-                    const newPartnerMol = offset + oldPartnerMol;
-                    const newPartnerComp = oldPartnerComp;
-                    
-                    const newKey = `${newMolIdx}.${c}`;
-                    const newPartnerKey = `${newPartnerMol}.${newPartnerComp}`;
-                    
-                    this.adjacency.set(newKey, newPartnerKey);
-                    newEdges.set(label, targetCompIdx); 
-                }
-            }
-            comp.edges = newEdges;
+      const newMolIdx = offset + i;
+      const mol = this.molecules[newMolIdx];
+
+      for (let c = 0; c < mol.components.length; c++) {
+        const comp = mol.components[c];
+        const newEdges = new Map<number, number>();
+
+        for (const [label, targetCompIdx] of comp.edges.entries()) {
+          const oldKey = `${i}.${c}`;
+          const oldPartner = other.adjacency.get(oldKey);
+          if (oldPartner) {
+            const [oldPartnerMol, oldPartnerComp] = oldPartner.split('.').map(Number);
+            const newPartnerMol = offset + oldPartnerMol;
+            const newPartnerComp = oldPartnerComp;
+
+            const newKey = `${newMolIdx}.${c}`;
+            const newPartnerKey = `${newPartnerMol}.${newPartnerComp}`;
+
+            this.adjacency.set(newKey, newPartnerKey);
+            newEdges.set(label, targetCompIdx);
+          }
         }
+        comp.edges = newEdges;
+      }
     }
 
     this.adjacencyBitset = undefined;
     this._componentOffsets = undefined;
     this._componentCount = undefined;
-    
+
     return offset;
   }
 
@@ -227,15 +227,15 @@ export class SpeciesGraph {
             const [pMolIdx, pCompIdx] = partner.split('.').map(Number);
             // Only add if we haven't added this bond yet (e.g. smaller index first)
             if (oldMolIdx < pMolIdx) {
-               // Find bond label
-               let label: number | undefined;
-               for(const [l, targetC] of comp.edges.entries()) {
-                   if (targetC === pCompIdx) label = l;
-               }
-               
-               const newM1 = oldToNew.get(oldMolIdx)!;
-               const newM2 = oldToNew.get(pMolIdx)!;
-               newGraph.addBond(newM1, compIdx, newM2, pCompIdx, label);
+              // Find bond label
+              let label: number | undefined;
+              for (const [l, targetC] of comp.edges.entries()) {
+                if (targetC === pCompIdx) label = l;
+              }
+
+              const newM1 = oldToNew.get(oldMolIdx)!;
+              const newM2 = oldToNew.get(pMolIdx)!;
+              newGraph.addBond(newM1, compIdx, newM2, pCompIdx, label);
             }
           }
         });

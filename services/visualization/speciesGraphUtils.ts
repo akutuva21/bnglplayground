@@ -181,6 +181,121 @@ export const snapshotComponentStates = (graphs: SpeciesGraph[]): Map<string, Sta
   return states;
 };
 
+/**
+ * Indexed snapshot that includes molecule and component indices for proper positional comparison.
+ * This is needed for state change detection where the same molecule type appears on both sides.
+ */
+export interface IndexedStateSnapshot {
+  molecule: string;
+  component: string;
+  state?: string;
+  molIdx: number;
+  compIdx: number;
+}
+
+/**
+ * Snapshot component states with positional indices for proper reactant/product comparison.
+ * Unlike snapshotComponentStates, this preserves all instances rather than deduplicating by type.
+ */
+export const snapshotComponentStatesIndexed = (graphs: SpeciesGraph[]): IndexedStateSnapshot[] => {
+  const states: IndexedStateSnapshot[] = [];
+  let globalMolIdx = 0;
+
+  graphs.forEach((graph) => {
+    graph.molecules.forEach((molecule) => {
+      molecule.components.forEach((component, compIdx) => {
+        states.push({
+          molecule: molecule.name,
+          component: component.name,
+          state: component.state,
+          molIdx: globalMolIdx,
+          compIdx,
+        });
+      });
+      globalMolIdx++;
+    });
+  });
+
+  return states;
+};
+
+/**
+ * Detect state changes between reactant and product patterns by matching molecules positionally.
+ * Returns an array of state changes with from/to states.
+ */
+export interface DetectedStateChange {
+  molecule: string;
+  component: string;
+  fromState: string;
+  toState: string;
+}
+
+export const detectStateChanges = (
+  reactantGraphs: SpeciesGraph[],
+  productGraphs: SpeciesGraph[]
+): DetectedStateChange[] => {
+  const changes: DetectedStateChange[] = [];
+
+  // Build maps indexed by molecule position within each pattern
+  // For rules like EGFR(Y2~u) -> EGFR(Y2~p), we match molecules by their order
+  const reactantMolecules: Array<{ name: string; components: Map<string, string | undefined> }> = [];
+  const productMolecules: Array<{ name: string; components: Map<string, string | undefined> }> = [];
+
+  reactantGraphs.forEach((graph) => {
+    graph.molecules.forEach((mol) => {
+      const compMap = new Map<string, string | undefined>();
+      mol.components.forEach((comp) => {
+        compMap.set(comp.name, comp.state);
+      });
+      reactantMolecules.push({ name: mol.name, components: compMap });
+    });
+  });
+
+  productGraphs.forEach((graph) => {
+    graph.molecules.forEach((mol) => {
+      const compMap = new Map<string, string | undefined>();
+      mol.components.forEach((comp) => {
+        compMap.set(comp.name, comp.state);
+      });
+      productMolecules.push({ name: mol.name, components: compMap });
+    });
+  });
+
+  // Match molecules by name and position
+  const usedProductIdx = new Set<number>();
+  
+  reactantMolecules.forEach((reactantMol) => {
+    // Find matching product molecule by name (first unused one)
+    const productIdx = productMolecules.findIndex((prodMol, idx) => {
+      return !usedProductIdx.has(idx) && prodMol.name === reactantMol.name;
+    });
+
+    if (productIdx === -1) return; // Molecule was deleted
+    
+    usedProductIdx.add(productIdx);
+    const productMol = productMolecules[productIdx];
+
+    // Compare components between matched molecules
+    reactantMol.components.forEach((reactantState, compName) => {
+      const productState = productMol.components.get(compName);
+      
+      const fromState = reactantState ?? 'unspecified';
+      const toState = productState ?? 'unspecified';
+
+      if (fromState !== toState) {
+        changes.push({
+          molecule: reactantMol.name,
+          component: compName,
+          fromState,
+          toState,
+        });
+      }
+    });
+  });
+
+  return changes;
+};
+
 export const extractAtoms = (graphs: SpeciesGraph[]): Set<string> => {
   const atoms = new Set<string>();
 

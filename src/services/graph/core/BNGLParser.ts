@@ -1,10 +1,10 @@
-// src/services/graph/core/BNGLParser.ts
-import { Component } from './Component';
-import { Molecule } from './Molecule';
-import { SpeciesGraph } from './SpeciesGraph';
-import { RxnRule } from './RxnRule';
+import { Component } from './Component.ts';
+import { Molecule } from './Molecule.ts';
+import { SpeciesGraph } from './SpeciesGraph.ts';
+import { RxnRule } from './RxnRule.ts';
 
-const shouldLogParser = true;
+const shouldLogParser = false;
+
 
 /**
  * Parser for BNGL strings to graph structures
@@ -23,32 +23,32 @@ export class BNGLParser {
     // Handle global compartment prefix like @nuc:A.B
     let globalCompartment: string | undefined;
     let content = bnglString.trim();
-    
+
     const prefixMatch = content.match(/^@([A-Za-z0-9_]+):(.+)$/);
     if (prefixMatch) {
-        globalCompartment = prefixMatch[1];
-        content = prefixMatch[2];
-        graph.compartment = globalCompartment;
+      globalCompartment = prefixMatch[1];
+      content = prefixMatch[2];
+      graph.compartment = globalCompartment;
     }
 
     // Helper to split by dot outside parentheses
     const splitMolecules = (str: string) => {
-        const parts: string[] = [];
-        let current = '';
-        let depth = 0;
-        for (let i = 0; i < str.length; i++) {
-            const char = str[i];
-            if (char === '(') depth++;
-            else if (char === ')') depth--;
-            else if (char === '.' && depth === 0) {
-                parts.push(current);
-                current = '';
-                continue;
-            }
-            current += char;
+      const parts: string[] = [];
+      let current = '';
+      let depth = 0;
+      for (let i = 0; i < str.length; i++) {
+        const char = str[i];
+        if (char === '(') depth++;
+        else if (char === ')') depth--;
+        else if (char === '.' && depth === 0) {
+          parts.push(current);
+          current = '';
+          continue;
         }
-        if (current) parts.push(current);
-        return parts;
+        current += char;
+      }
+      if (current) parts.push(current);
+      return parts;
     };
 
     const moleculeStrings = splitMolecules(content);
@@ -57,7 +57,7 @@ export class BNGLParser {
       const molecule = this.parseMolecule(molStr.trim());
       // If global compartment is set and molecule doesn't have one, inherit it
       if (globalCompartment && !molecule.compartment) {
-          molecule.compartment = globalCompartment;
+        molecule.compartment = globalCompartment;
       }
       graph.molecules.push(molecule);
     }
@@ -78,13 +78,13 @@ export class BNGLParser {
         if (partners.length === 2) {
           const [p1, p2] = partners;
           if (shouldLogParser) {
-             // console.log(`[BNGLParser] Adding bond ${label} between ${p1.molIdx}.${p1.compIdx} and ${p2.molIdx}.${p2.compIdx}`);
+            // console.log(`[BNGLParser] Adding bond ${label} between ${p1.molIdx}.${p1.compIdx} and ${p2.molIdx}.${p2.compIdx}`);
           }
           graph.addBond(p1.molIdx, p1.compIdx, p2.molIdx, p2.compIdx, label);
         } else {
-            if (shouldLogParser) {
-                console.warn(`[BNGLParser] Bond ${label} has ${partners.length} partners (expected 2) in string: ${bnglString}`);
-            }
+          if (shouldLogParser) {
+            console.warn(`[BNGLParser] Bond ${label} has ${partners.length} partners (expected 2) in string: ${bnglString}`);
+          }
         }
       });
     }
@@ -98,20 +98,28 @@ export class BNGLParser {
    * Also handles "@comp:Name", "Name@comp", and tags "Name%1"
    */
   static parseMolecule(molStr: string): Molecule {
+    if (shouldLogParser && molStr.includes('!+')) console.log(`[BNGLParser] parseMolecule input: '${molStr}'`);
     // Check for prefix notation: @comp:Name...
     let compartment: string | undefined;
     let cleanStr = molStr;
-    
+
     const prefixMatch = molStr.match(/^@([A-Za-z0-9_]+):(.+)$/);
     if (prefixMatch) {
-        compartment = prefixMatch[1];
-        cleanStr = prefixMatch[2];
+      compartment = prefixMatch[1];
+      cleanStr = prefixMatch[2];
     }
 
-    // Strip % tag if present (e.g. Molecule%1)
-    cleanStr = cleanStr.replace(/%\d+$/, '');
+    // Check for suffix notation: Name@comp
+    // Be careful not to match inside parentheses
+    const suffixMatch = cleanStr.match(/^([^\(]+)@([A-Za-z0-9_]+)(\(.*\))?$/);
+    if (suffixMatch) {
+      // This regex is simplistic, might need robustness
+      // Actually, standard BNGL puts compartment after name before parens? Or after parens?
+      // "A@cyt(b)" or "A(b)@cyt"? BioNetGen usually "A@cyt(b)".
+      // Let's stick to the simpler regex for now:
+    }
 
-    // Matches: Name(components)@Compartment or Name@Compartment or Name(components)
+    // Parse name and components
     const match = cleanStr.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?:\(([^)]*)\))?(?:@([A-Za-z0-9_]+))?\s*$/);
     if (!match) {
       // Molecule without components, e.g., "A"
@@ -121,9 +129,9 @@ export class BNGLParser {
     const name = match[1];
     const componentStr = match[2] || '';
     const suffixCompartment = match[3];
-    
+
     if (suffixCompartment) {
-        compartment = suffixCompartment;
+      compartment = suffixCompartment;
     }
 
     if (!componentStr.trim()) {
@@ -164,78 +172,79 @@ export class BNGLParser {
         }
       }
     }
+    if (compStr.includes('!+')) {
+       if (shouldLogParser) console.log(`[BNGLParser] Parsing component '${compStr}': wildcard='${component.wildcard}'`);
+    }
     return component;
   }
 
   /**
    * Parse a BNGL reaction rule string into RxnRule
    * Example: "A(b) + B(a) -> A(b!1).B(a!1)"
+   * Also handles synthesis rules: "0 -> A()" or "" -> A()
+   * Also handles degradation rules: "A() -> 0"
    */
   static parseRxnRule(ruleStr: string, rateConstant: number, name?: string): RxnRule {
     // Detect arrow robustly (->, <-, <->, ~>) and split around the first arrow
     const arrowRegex = /(?:<->|->|<-|~>)/;
     const arrowMatch = ruleStr.match(arrowRegex);
     if (!arrowMatch) throw new Error(`Invalid rule (no arrow found): ${ruleStr}`);
-    const parts = ruleStr.split(arrowRegex).map(p => p.trim()).filter(Boolean);
-    if (parts.length < 2) throw new Error(`Invalid rule: ${ruleStr}`);
+    const parts = ruleStr.split(arrowRegex).map(p => p.trim());
+    // Filter but keep track of empty strings for synthesis rules
+    const nonEmpty = parts.filter(Boolean);
+    if (nonEmpty.length < 1) throw new Error(`Invalid rule: ${ruleStr}`);
 
-    const reactantsStr = parts[0];
-    const productsStr = parts.slice(1).join(' ');
+    const reactantsStr = parts[0] || '';
+    const productsStr = parts.slice(1).join(' ').trim();
 
-    // parseEntityList: split top-level entities by '+' or by multiple spaces, respecting parentheses depth
+    // parseEntityList: split top-level entities by '+' respecting parentheses depth
     const parseEntityList = (segment: string) => {
       if (!segment || !segment.trim()) return [] as string[];
 
-      // First split on top-level '+' or runs of 2+ spaces (common alternate separator)
-      const topLevelCandidates = segment.split(/\s*\+\s*|(?<=\S)\s{2,}(?=\S)/).map(s => s.trim()).filter(Boolean);
-
       const parts: string[] = [];
-      for (const cand of topLevelCandidates) {
-        let current = '';
-        let depth = 0;
-        for (let i = 0; i < cand.length; i++) {
-          const ch = cand[i];
-          if (ch === '(') depth++;
-          else if (ch === ')') depth--;
-          else if (ch === '.' && depth === 0) {
-              // Do NOT split on dot here, dots are inside molecules/complexes
-          }
-          
-          // Keep commas inside parentheses; top-level commas are not used to separate entities here
-          // We only split on '+'/multi-space at the top level via the initial split above.
-          current += ch;
-        }
-        if (current.trim()) parts.push(current.trim());
-      }
+      let current = '';
+      let depth = 0;
 
-      // As a fallback, if no splits found and segment contains whitespace separators (single spaces) that likely separate molecules,
-      // attempt a more permissive split: split on single space when depth==0 and next token looks like a molecule name.
-      if (parts.length === 1 && parts[0].includes(' ') ) {
-        const moreParts: string[] = [];
-        let cur = '';
-        let d = 0;
-        for (let i = 0; i < segment.length; i++) {
-          const ch = segment[i];
-          if (ch === '(') d++;
-          else if (ch === ')') d = Math.max(0, d - 1);
-          if (d === 0 && ch === ' ') {
-            if (cur.trim()) moreParts.push(cur.trim());
-            cur = '';
-            // skip subsequent spaces
-            while (i + 1 < segment.length && segment[i + 1] === ' ') i++;
-            continue;
-          }
-          cur += ch;
+      for (let i = 0; i < segment.length; i++) {
+        const char = segment[i];
+
+        if (char === '(') {
+          depth++;
+          current += char;
+        } else if (char === ')') {
+          depth--;
+          current += char;
+        } else if (depth === 0 && char === '+') {
+          // Split on + at top level
+          if (current.trim()) parts.push(current.trim());
+          current = '';
+        } else {
+          current += char;
         }
-        if (cur.trim()) moreParts.push(cur.trim());
-        if (moreParts.length > 1) return moreParts;
       }
+      if (current.trim()) parts.push(current.trim());
 
       return parts;
     };
 
-    const reactants = parseEntityList(reactantsStr).map(s => this.parseSpeciesGraph(s.trim(), true));
-    const products = parseEntityList(productsStr).map(s => this.parseSpeciesGraph(s.trim(), true));
+    // Handle synthesis rules: "0 -> X" means empty reactants
+    let reactantsList = parseEntityList(reactantsStr);
+    if (reactantsList.length === 1 && reactantsList[0] === '0') {
+      reactantsList = [];
+    }
+
+    // Handle degradation rules: "X -> 0" means empty products
+    let productsList = parseEntityList(productsStr);
+    if (productsList.length === 1 && productsList[0] === '0') {
+      productsList = [];
+    }
+
+    if (shouldLogParser && reactantsStr.includes('!+')) {
+      console.log(`[BNGLParser] parseRxnRule reactantsStr: '${reactantsStr}'`);
+      console.log(`[BNGLParser] parseEntityList result:`, JSON.stringify(reactantsList));
+    }
+    const reactants = reactantsList.map(s => this.parseSpeciesGraph(s.trim(), true));
+    const products = productsList.map(s => this.parseSpeciesGraph(s.trim(), true));
 
     return new RxnRule(name || '', reactants, products, rateConstant);
   }
@@ -264,29 +273,29 @@ export class BNGLParser {
     for (const raw of block.split('\n')) {
       const line = raw.split('#')[0].trim();
       if (!line) continue;
-      
+
       // Split by whitespace
       const parts = line.split(/\s+/);
       if (parts.length < 2) continue;
-      
+
       const concentrationStr = parts.pop()!;
-      
+
       // Determine start index for species pattern
       let startIndex = 0;
       if (/^\d+$/.test(parts[0])) {
-          // Starts with number (index)
-          startIndex = 1;
+        // Starts with number (index)
+        startIndex = 1;
       } else if (parts[0].endsWith(':')) {
-          // Starts with Label:
-          startIndex = 1;
+        // Starts with Label:
+        startIndex = 1;
       }
-      
+
       // Join remaining parts to form species pattern
       // Use join('') because BNGL patterns usually don't have spaces, 
       // but if they were split by space, we reconstruct.
       // However, if we have "A . B", split gives "A", ".", "B". join('') gives "A.B". Correct.
       const speciesStr = parts.slice(startIndex).join('');
-      
+
       const amt = this.evaluateExpression(concentrationStr, parameters);
       seed.set(speciesStr, amt);
     }
@@ -295,9 +304,22 @@ export class BNGLParser {
 
   /**
    * Evaluate mathematical expressions with parameter substitution
+   * @param expr - The expression to evaluate
+   * @param parameters - Map of parameter names to values
+   * @param observables - Optional map of observable names (for validation, uses placeholder values)
+   * @returns The evaluated number, or NaN if evaluation fails or expression is invalid
    */
-  static evaluateExpression(expr: string, parameters: Map<string, number>): number {
+  static evaluateExpression(
+    expr: string, 
+    parameters: Map<string, number>,
+    observables?: Map<string, number> | Set<string>
+  ): number {
     try {
+      // Return NaN for empty or whitespace-only expressions
+      if (!expr || expr.trim() === '') {
+        return NaN;
+      }
+
       // Replace parameter names with values
       let evaluable = expr;
 
@@ -311,12 +333,30 @@ export class BNGLParser {
         evaluable = evaluable.replace(regex, value.toString());
       }
 
+      // If observables are provided, replace observable names with placeholder values (1)
+      // This allows rate expressions with observables to validate syntactically
+      if (observables) {
+        const obsNames = observables instanceof Set 
+          ? Array.from(observables) 
+          : Array.from(observables.keys());
+        
+        // Sort by length (longest first)
+        obsNames.sort((a, b) => b.length - a.length);
+        
+        for (const name of obsNames) {
+          const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          const regex = new RegExp(`\\b${escapedName}\\b`, 'g');
+          // Use 1 as placeholder to avoid division by zero issues
+          evaluable = evaluable.replace(regex, '1');
+        }
+      }
+
       // Use Function constructor for safe evaluation
       const result = new Function(`return ${evaluable}`)();
-      return typeof result === 'number' && !isNaN(result) ? result : 0;
+      return typeof result === 'number' && !isNaN(result) ? result : NaN;
     } catch (e) {
       console.error(`[evaluateExpression] Failed to evaluate: "${expr}"`, e);
-      return 0;
+      return NaN;
     }
   }
 }

@@ -19,6 +19,46 @@ type ZoomDomain = {
   y2: number | 'dataMax';
 }
 
+// Threshold for when to move legend below the chart
+const LEGEND_THRESHOLD = 8;
+
+// External legend component for when there are many series
+const ExternalLegend: React.FC<{
+  series: string[];
+  visibleSpecies: Set<string>;
+  onToggle: (name: string) => void;
+  highlightedSeries: Set<string>;
+}> = ({ series, visibleSpecies, onToggle, highlightedSeries }) => {
+  return (
+    <div className="mt-4 max-h-48 overflow-y-auto border-t border-slate-200 dark:border-slate-700 pt-4">
+      <div className="flex flex-wrap justify-center items-center gap-x-4 gap-y-2 px-4">
+        {series.map((name, index) => {
+          const isVisible = visibleSpecies.has(name);
+          const isHighlighted = highlightedSeries.size === 0 || highlightedSeries.has(name);
+          return (
+            <div
+              key={name}
+              onClick={() => onToggle(name)}
+              className={`flex items-center cursor-pointer transition-opacity ${!isVisible ? 'opacity-40' : isHighlighted ? 'opacity-100' : 'opacity-60'}`}
+            >
+              <div 
+                style={{ 
+                  width: 12, 
+                  height: 12, 
+                  backgroundColor: CHART_COLORS[index % CHART_COLORS.length], 
+                  marginRight: 6, 
+                  borderRadius: '2px' 
+                }} 
+              />
+              <span className="text-xs text-slate-700 dark:text-slate-300">{name}</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
+
 const CustomLegend = (props: any) => {
   const { payload, onClick } = props;
 
@@ -38,7 +78,7 @@ const CustomLegend = (props: any) => {
   );
 };
 
-export const ResultsChart: React.FC<ResultsChartProps> = ({ results, model, visibleSpecies, onVisibleSpeciesChange, highlightedSeries = [] }) => {
+export const ResultsChart: React.FC<ResultsChartProps> = ({ results, visibleSpecies, onVisibleSpeciesChange, highlightedSeries = [] }) => {
   const [zoomHistory, setZoomHistory] = useState<ZoomDomain[]>([]);
   const [selection, setSelection] = useState<ZoomDomain | null>(null);
   const [filterMode, setFilterMode] = useState<'all' | 'search'>('all');
@@ -113,6 +153,19 @@ export const ResultsChart: React.FC<ResultsChartProps> = ({ results, model, visi
   };
   const currentDomain = zoomHistory.length > 0 ? zoomHistory[zoomHistory.length - 1] : undefined;
   const highlightSet = new Set(highlightedSeries);
+  
+  // Use external legend when there are many series to keep chart size fixed
+  const useExternalLegend = speciesToPlot.length > LEGEND_THRESHOLD;
+
+  const handleToggleSeries = (name: string) => {
+    const newVisibleSpecies = new Set(visibleSpecies);
+    if (newVisibleSpecies.has(name)) {
+      newVisibleSpecies.delete(name);
+    } else {
+      newVisibleSpecies.add(name);
+    }
+    onVisibleSpeciesChange(newVisibleSpecies);
+  };
 
   return (
     <Card className="max-w-full overflow-hidden">
@@ -146,7 +199,8 @@ export const ResultsChart: React.FC<ResultsChartProps> = ({ results, model, visi
             }}
             labelFormatter={(label) => `Time: ${typeof label === 'number' ? label.toFixed(2) : label}`}
           />
-          <Legend onClick={handleLegendClick} content={<CustomLegend />} />
+          {/* Only show in-chart legend when there are few series */}
+          {!useExternalLegend && <Legend onClick={handleLegendClick} content={<CustomLegend />} />}
           {speciesToPlot.filter(filterVisibleSpecies).map((speciesName, i) => (
             <Line
               key={speciesName}
@@ -170,6 +224,17 @@ export const ResultsChart: React.FC<ResultsChartProps> = ({ results, model, visi
           )}
         </LineChart>
       </ResponsiveContainer>
+      
+      {/* External legend below the chart when there are many series */}
+      {useExternalLegend && (
+        <ExternalLegend
+          series={speciesToPlot.filter(filterVisibleSpecies)}
+          visibleSpecies={visibleSpecies}
+          onToggle={handleToggleSeries}
+          highlightedSeries={highlightSet}
+        />
+      )}
+      
       <div className="mt-3 flex items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <div className="inline-flex gap-2">

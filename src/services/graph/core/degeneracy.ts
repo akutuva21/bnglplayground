@@ -1,7 +1,7 @@
-import { SpeciesGraph } from './SpeciesGraph';
-import { Molecule } from './Molecule';
-import { Component } from './Component';
-import { GraphMatcher, MatchMap } from './Matcher';
+import { SpeciesGraph } from './SpeciesGraph.ts';
+import { Molecule } from './Molecule.ts';
+import { Component } from './Component.ts';
+import { GraphMatcher, type MatchMap } from './Matcher.ts';
 
 const buildInducedSubgraph = (target: SpeciesGraph, included: number[]): SpeciesGraph => {
   const includedSet = new Set(included);
@@ -85,7 +85,7 @@ const buildInducedSubgraph = (target: SpeciesGraph, included: number[]): Species
       continue;
     }
 
-  const label = getBondLabel(molIdx, compIdx, partnerCompIdx);
+    const label = getBondLabel(molIdx, compIdx, partnerCompIdx);
     subgraph.addBond(newMolIdxA, compIdx, newMolIdxB, partnerCompIdx, label);
   }
 

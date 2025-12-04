@@ -1,5 +1,5 @@
 // graph/core/Canonical.ts
-import { SpeciesGraph } from './SpeciesGraph';
+import { SpeciesGraph } from './SpeciesGraph.ts';
 
 interface MoleculeInfo {
   originalIndex: number;
@@ -26,7 +26,7 @@ export class GraphCanonicalizer {
         let sig = comp.name;
         if (comp.state && comp.state !== '?') sig += `~${comp.state}`;
         if (comp.wildcard) sig += `!${comp.wildcard}`;
-        
+
         // Add connectivity info to signature (PartnerName:PartnerComp)
         // This helps distinguish A bound to B from A bound to C
         const adjacencyKey = `${molIdx}.${compIdx}`;
@@ -43,12 +43,12 @@ export class GraphCanonicalizer {
             sig += `->?`;
           }
         } else if (comp.edges.size > 0) {
-            // Should not happen if adjacency is consistent, but fallback
-            sig += `!+`;
+          // Should not happen if adjacency is consistent, but fallback
+          sig += `!+`;
         }
         return sig;
       });
-      
+
       // Sort component signatures to ensure component order doesn't affect molecule signature
       // (Note: BNGL usually requires components to be defined in order, but good to be safe)
       compSigs.sort();
@@ -82,7 +82,7 @@ export class GraphCanonicalizer {
     // We iterate through molecules in canonical order.
     // For each bond encountered, if it hasn't been assigned a label yet, assign the next available integer.
     // We use a map key based on the canonical indices of the connected components to track assigned bonds.
-    
+
     let nextBondId = 1;
     const bondMapping = new Map<string, number>(); // Key: "minMol.minComp-maxMol.maxComp" -> BondID
 
@@ -90,7 +90,7 @@ export class GraphCanonicalizer {
     const getCanonicalBondId = (molIdx: number, compIdx: number): number | null => {
       const adjacencyKey = `${molIdx}.${compIdx}`;
       const partnerKey = graph.adjacency.get(adjacencyKey);
-      
+
       if (!partnerKey) return null;
 
       const [pMolIdxStr, pCompIdxStr] = partnerKey.split('.');
@@ -123,7 +123,7 @@ export class GraphCanonicalizer {
       const componentStrings = mol.components.map((comp: any, compIdx: number) => {
         let str = comp.name;
         if (comp.state && comp.state !== '?') str += `~${comp.state}`;
-        
+
         // Check for bond
         const bondId = getCanonicalBondId(molIdx, compIdx);
         if (bondId !== null) {
@@ -131,10 +131,10 @@ export class GraphCanonicalizer {
         } else if (comp.wildcard) {
           str += `!${comp.wildcard}`;
         }
-        
+
         return str;
       });
-      
+
       componentStrings.sort();
 
       const compartmentSuffix = mol.compartment ? `@${mol.compartment}` : '';

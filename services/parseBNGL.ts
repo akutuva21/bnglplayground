@@ -1,10 +1,6 @@
-import type { BNGLModel } from '../types';
-import { BNGLParser } from '../src/services/graph/core/BNGLParser';
 
-export type ParseBNGLOptions = {
-  checkCancelled?: () => void;
-  debug?: boolean;
-};
+import type { BNGLModel } from '../types.ts';
+import { BNGLParser } from '../src/services/graph/core/BNGLParser.ts';
 
 const speciesPattern = /^[A-Za-z0-9_]+(?:\([^)]*\))?(?:\.[A-Za-z0-9_]+(?:\([^)]*\))?)*$/;
 
@@ -70,84 +66,167 @@ const parseEntityList = (segment: string) => {
 
 const splitProductsAndRates = (segment: string, parameters: Record<string, number>) => {
   // Improved splitting logic:
-  // 1. Tokenize by whitespace
-  // 2. Iterate from end to find rate constants
-  // Rate constants are typically numbers, parameter names, or expressions.
-  // Products are molecule patterns.
-  
-  const tokens = segment
-    .trim()
-    .split(/\s+/)
-    .filter((token) => token.length > 0);
+  // Tokenize respecting parentheses, then identify product vs rate tokens.
+  // Products are molecule patterns (contain parentheses with component states, @, etc.)
+  // Rates are numbers, parameters, or mathematical expressions.
+  // 
+  // Key insight: In BNGL, "+" between species is a separator (e.g., A() + B()),
+  // but within rate expressions, operators like +, -, *, / are math operators.
+  // We need to be careful not to merge molecule patterns into math expressions.
+
+  const trimmed = segment.trim();
+  if (!trimmed) {
+    return { productChunk: '', rateChunk: '' };
+  }
+
+  // Helper: Check if a string looks like a molecule pattern
+  const looksLikeMolecule = (s: string): boolean => {
+    const cleaned = s.trim();
+    if (!cleaned) return false;
+    // Has parentheses with component syntax (commas, tildes, !, etc. inside)
+    if (/\([^)]*[~,!][^)]*\)/.test(cleaned)) return true;
+    // Has compartment
+    if (/@/.test(cleaned)) return true;
+    // Simple molecule with empty parens like A()
+    if (/^[A-Za-z_][A-Za-z0-9_]*\(\s*\)$/.test(cleaned)) return true;
+    // Molecule with dot notation (complex): A().B()
+    if (/\)\s*\.\s*[A-Za-z_]/.test(cleaned)) return true;
+    return false;
+  };
+
+  // First, tokenize respecting parentheses - group parenthesized expressions together
+  const tokens: string[] = [];
+  let current = '';
+  let depth = 0;
+
+  for (let i = 0; i < trimmed.length; i++) {
+    const ch = trimmed[i];
+
+    if (ch === '(') {
+      depth++;
+      current += ch;
+    } else if (ch === ')') {
+      depth--;
+      current += ch;
+    } else if (/\s/.test(ch) && depth === 0) {
+      // At top level, whitespace is a separator
+      if (current.trim()) {
+        tokens.push(current.trim());
+        current = '';
+      }
+    } else {
+      current += ch;
+    }
+  }
+  if (current.trim()) {
+    tokens.push(current.trim());
+  }
 
   if (tokens.length === 0) {
     return { productChunk: '', rateChunk: '' };
   }
 
-  const rateTokens: string[] = [];
-  
-  // Heuristic: Scan from the end.
-  // A token is part of the rate if:
-  // - It is a number
-  // - It is a known parameter
-  // - It contains math operators (*, /, +, -) and NOT molecule syntax (like @, :, . inside parens)
-  // - It is a keyword (exclude_reactants, etc.)
-  // - It is a comma (separator between forward/reverse rates)
-  
-  // However, "0" can be a product (degradation) or a rate.
-  // If we have "A -> 0 k", "0" is product, "k" is rate.
-  // If we have "A -> B k", "B" is product.
-  
-  // Let's try to identify the boundary.
-  // We assume rates are at the end.
-  
-  let splitIndex = tokens.length;
-  
-  for (let i = tokens.length - 1; i >= 0; i--) {
-      const token = tokens[i];
-      const cleaned = token.replace(/,$/, '');
+  // Now merge tokens that look like they're part of a math expression
+  // But DON'T merge if either side looks like a molecule!
+  // An expression may have been split like ["expr1", "*", "expr2"] or ["expr", "/", "expr"]
+  const mergedTokens: string[] = [];
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i];
+    const isOperator = ['+', '-', '*', '/'].includes(token.trim());
+
+    if (isOperator && mergedTokens.length > 0 && i + 1 < tokens.length) {
+      const prev = mergedTokens[mergedTokens.length - 1];
+      const next = tokens[i + 1];
       
-      const isNumber = !Number.isNaN(parseFloat(cleaned));
-      const isParam = Object.prototype.hasOwnProperty.call(parameters, cleaned);
-      const isKeyword = /^(exclude_reactants|include_reactants|DeleteMolecules|MoveMolecules)/.test(cleaned);
-      const isMath = /[*/+-]/.test(cleaned) && !/@/.test(cleaned) && !/:/.test(cleaned); // Avoid @comp:Mol
-      const isComma = token === ',';
+      // Only merge if NEITHER prev nor next looks like a molecule
+      // + between molecules is a separator, not math
+      const prevIsMolecule = looksLikeMolecule(prev);
+      const nextIsMolecule = looksLikeMolecule(next);
       
-      // If it looks like a rate/param/keyword, we include it in rate chunk.
-      // If it looks like a molecule (has parens, @, :), it's likely a product.
-      // Exception: "0" could be ambiguous.
-      
-      const looksLikeMolecule = /[():@]/.test(cleaned) || (cleaned.match(/^[A-Za-z0-9_]+$/) && !isParam && !isNumber && !isKeyword);
-      
-      if (looksLikeMolecule && !isKeyword) {
-          // Found a product, stop scanning
-          break;
+      if (!prevIsMolecule && !nextIsMolecule) {
+        // Both look like rate expressions, merge them
+        mergedTokens.pop();
+        mergedTokens.push(`${prev} ${token} ${next}`);
+        i++; // Skip next token as we've consumed it
+      } else {
+        // Don't merge - this is a species separator
+        mergedTokens.push(token);
       }
-      
-      // If it's "0" and it's the ONLY token left, it might be the product "0".
-      // But if we have "-> 0 k", then "0" is product.
-      // If we have "-> k", then "k" is rate.
-      
+    } else {
+      mergedTokens.push(token);
+    }
+  }
+
+  // Now identify the boundary between products and rates
+  // Scan from the end to find where rates begin
+  // Products are molecules (usually have parentheses with component syntax, or are "0")
+  // Rates are numbers, params, or expressions
+
+  let splitIndex = mergedTokens.length;
+
+  for (let i = mergedTokens.length - 1; i >= 0; i--) {
+    const token = mergedTokens[i];
+    const cleaned = token.replace(/,$/, '').trim();
+
+    // Skip isolated "+" tokens - they're species separators
+    if (cleaned === '+') {
+      continue;
+    }
+
+    // Check what this token looks like
+    const isNumber = !Number.isNaN(parseFloat(cleaned));
+    const isParam = Object.prototype.hasOwnProperty.call(parameters, cleaned);
+    const isKeyword = /^(exclude_reactants|include_reactants|DeleteMolecules|MoveMolecules)/.test(cleaned);
+    const isMolecule = looksLikeMolecule(cleaned);
+    
+    // Math expressions contain operators outside of parentheses (*, /, -, and + in math context)
+    const hasMathOutsideParens = (() => {
+      let d = 0;
+      for (const ch of cleaned) {
+        if (ch === '(') d++;
+        else if (ch === ')') d--;
+        else if (d === 0 && ['*', '/'].includes(ch)) return true;
+      }
+      return false;
+    })();
+
+    // Decide if this is part of rate or product
+    if (isMolecule && !isKeyword) {
+      // Found a product, stop scanning
+      break;
+    }
+
+    if (isNumber || isParam || isKeyword || hasMathOutsideParens) {
       splitIndex = i;
+    } else if (cleaned.match(/^[A-Za-z_][A-Za-z0-9_]*$/) && !isParam) {
+      // Unknown identifier - could be an observable or undefined param
+      // Treat as part of rate if it follows rate-like tokens
+      splitIndex = i;
+    } else {
+      // Unknown token type - likely a product
+      break;
+    }
   }
-  
-  // Special case: if splitIndex is 0, it means everything looks like rate tokens.
-  // But there might be a product "0".
-  // If the first token is "0" and there are other tokens, "0" is likely the product.
-  if (splitIndex === 0 && tokens.length > 1 && tokens[0] === '0') {
-      splitIndex = 1;
+
+  // Special case: if splitIndex is 0, everything looks like rate tokens.
+  // But if the first token is "0" and there are other tokens, "0" is likely the product (degradation).
+  if (splitIndex === 0 && mergedTokens.length > 1 && mergedTokens[0] === '0') {
+    splitIndex = 1;
   }
-  
-  // If splitIndex is tokens.length, no rate found? (e.g. "A -> B") - invalid in BNGL usually
-  
-  const productTokens = tokens.slice(0, splitIndex);
-  const rateChunkTokens = tokens.slice(splitIndex);
-  
+
+  const productTokens = mergedTokens.slice(0, splitIndex);
+  const rateChunkTokens = mergedTokens.slice(splitIndex);
+
   return {
-      productChunk: productTokens.join(' '),
-      rateChunk: rateChunkTokens.join(' ')
+    productChunk: productTokens.join(' '),
+    rateChunk: rateChunkTokens.join(' ')
   };
 };
+
+export interface ParseBNGLOptions {
+  checkCancelled?: () => void;
+  debug?: boolean;
+}
 
 export function parseBNGL(code: string, options: ParseBNGLOptions = {}): BNGLModel {
   const { checkCancelled, debug } = options;
@@ -203,18 +282,54 @@ export function parseBNGL(code: string, options: ParseBNGLOptions = {}): BNGLMod
 
   const paramsContent = getBlockContent('parameters', code);
   if (paramsContent) {
+    // First pass: collect all parameter expressions (may reference other params)
+    const paramExpressions: Record<string, string> = {};
     for (const line of paramsContent.split(/\r?\n/)) {
       maybeCancel();
       const cleaned = cleanLine(line);
       if (cleaned) {
         const parts = cleaned.split(/\s+/);
         if (parts.length >= 2) {
-          const value = parseFloat(parts[1]);
-          model.parameters[parts[0]] = value;
-          logDebug('[parseBNGL] parameter', parts[0], value);
+          // Store the raw expression (could be a number or another parameter name or math expression)
+          paramExpressions[parts[0]] = parts.slice(1).join(' ');
         }
       }
     }
+    
+    // Second pass: resolve parameter expressions
+    // We may need multiple passes for dependencies like a = b, b = c, c = 1
+    const resolvedParams: Record<string, number> = {};
+    const maxPasses = 10;
+    for (let pass = 0; pass < maxPasses; pass++) {
+      let allResolved = true;
+      for (const [name, expr] of Object.entries(paramExpressions)) {
+        if (name in resolvedParams) continue;
+        
+        // Try to evaluate the expression using already resolved params
+        let evalExpr = expr;
+        const sortedResolved = Object.entries(resolvedParams).sort((a, b) => b[0].length - a[0].length);
+        for (const [resolvedName, resolvedValue] of sortedResolved) {
+          const escaped = resolvedName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          evalExpr = evalExpr.replace(new RegExp(`\\b${escaped}\\b`, 'g'), resolvedValue.toString());
+        }
+        
+        try {
+          const value = new Function(`return ${evalExpr}`)();
+          if (typeof value === 'number' && !isNaN(value) && isFinite(value)) {
+            resolvedParams[name] = value;
+            logDebug('[parseBNGL] parameter', name, value);
+          } else {
+            allResolved = false;
+          }
+        } catch {
+          allResolved = false;
+        }
+      }
+      if (allResolved) break;
+    }
+    
+    // Copy resolved params to model
+    Object.assign(model.parameters, resolvedParams);
   }
 
   // Support both "molecule types" and "molecules" blocks
@@ -226,7 +341,7 @@ export function parseBNGL(code: string, options: ParseBNGLOptions = {}): BNGLMod
     for (const line of molTypesContent.split(/\r?\n/)) {
       maybeCancel();
       const cleaned = cleanLine(line);
-        if (cleaned) {
+      if (cleaned) {
         const match = cleaned.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?:\(([^)]*)\))?\s*$/);
         if (match) {
           const name = match[1];
@@ -307,20 +422,20 @@ export function parseBNGL(code: string, options: ParseBNGLOptions = {}): BNGLMod
     for (const line of observablesContent.split(/\r?\n/)) {
       maybeCancel();
       const cleaned = cleanLine(line);
-        if (cleaned) {
+      if (cleaned) {
         const parts = cleaned.split(/\s+/);
         if (parts.length >= 2) {
-             let type = 'molecules';
-             let name = parts[0];
-             let pattern = parts.slice(1).join(' ');
-             
-             if (parts.length >= 3 && (parts[0].toLowerCase() === 'molecules' || parts[0].toLowerCase() === 'species')) {
-                 type = parts[0].toLowerCase();
-                 name = parts[1];
-                 pattern = parts.slice(2).join(' ');
-             }
-             
-             model.observables.push({ type: type as 'molecules' | 'species', name, pattern, comment: extractInlineComment(line) });
+          let type = 'molecules';
+          let name = parts[0];
+          let pattern = parts.slice(1).join(' ');
+
+          if (parts.length >= 3 && (parts[0].toLowerCase() === 'molecules' || parts[0].toLowerCase() === 'species')) {
+            type = parts[0].toLowerCase();
+            name = parts[1];
+            pattern = parts.slice(2).join(' ');
+          }
+
+          model.observables.push({ type: type as 'molecules' | 'species', name, pattern, comment: extractInlineComment(line) });
         }
       }
     }
@@ -356,7 +471,7 @@ export function parseBNGL(code: string, options: ParseBNGLOptions = {}): BNGLMod
       maybeCancel();
       let ruleLine = statement;
       let ruleName: string | undefined;
-      
+
       // Check for Label: ...
       const labelMatch = ruleLine.match(/^([^:]+):\s*(.*)$/);
       if (labelMatch) {
@@ -369,14 +484,14 @@ export function parseBNGL(code: string, options: ParseBNGLOptions = {}): BNGLMod
         // Check for Label ... (no colon, but space separated at start)
         const spaceMatch = ruleLine.match(/^([A-Za-z0-9_]+)\s+(.*)$/);
         if (spaceMatch) {
-             const potentialLabel = spaceMatch[1];
-             const rest = spaceMatch[2];
-             
-             // If potentialLabel starts with digit, it's a label
-             if (/^\d/.test(potentialLabel)) {
-                 ruleName = potentialLabel;
-                 ruleLine = rest;
-             }
+          const potentialLabel = spaceMatch[1];
+          const rest = spaceMatch[2];
+
+          // If potentialLabel starts with digit, it's a label
+          if (/^\d/.test(potentialLabel)) {
+            ruleName = potentialLabel;
+            ruleLine = rest;
+          }
         }
       }
 
@@ -398,10 +513,11 @@ export function parseBNGL(code: string, options: ParseBNGLOptions = {}): BNGLMod
       const reactantsPart = ruleLine.slice(0, arrowIndex).trim();
       const productsAndRatesPart = ruleLine.slice(arrowIndex + arrow.length).trim();
 
-      const reactants = parseEntityList(reactantsPart);
-      if (reactants.length === 0) {
-        console.warn('[parseBNGL] Rule parsing: no reactants parsed for:', statement);
-        return;
+      // Parse reactants, allowing "0" for synthesis rules
+      let reactants = parseEntityList(reactantsPart);
+      // Handle synthesis rules: "0 -> X" means zero reactants
+      if (reactants.length === 1 && reactants[0] === '0') {
+        reactants = [];
       }
 
       const { productChunk, rateChunk } = splitProductsAndRates(productsAndRatesPart, model.parameters);
@@ -410,20 +526,39 @@ export function parseBNGL(code: string, options: ParseBNGLOptions = {}): BNGLMod
 
       // Tokenize rate chunk respecting parentheses to handle function calls like exclude_reactants(2,R)
       // FIX: Split by comma only to preserve math expressions like "2.0 * 602.0"
+      // Also handle whitespace-separated keywords (exclude_reactants, include_reactants, DeleteMolecules)
       const tokenizeRateChunk = (chunk: string) => {
         const tokens: string[] = [];
         let current = '';
         let depth = 0;
-        
+
+        // Keywords that should be split on whitespace
+        const keywords = ['exclude_reactants', 'include_reactants', 'DeleteMolecules', 'MoveMolecules'];
+
         for (let i = 0; i < chunk.length; i++) {
           const ch = chunk[i];
           if (ch === '(') depth++;
           else if (ch === ')') depth--;
-          
+
           // Only split on comma at top level
           if (ch === ',' && depth === 0) {
             if (current.trim()) tokens.push(current.trim());
             current = '';
+          } else if (/\s/.test(ch) && depth === 0) {
+            // At top level whitespace, check if next non-whitespace starts a keyword
+            let j = i + 1;
+            while (j < chunk.length && /\s/.test(chunk[j])) j++;
+            const remaining = chunk.substring(j);
+            const startsWithKeyword = keywords.some(kw => remaining.startsWith(kw));
+            
+            if (startsWithKeyword && current.trim()) {
+              // Split here - current token ends, keyword starts
+              tokens.push(current.trim());
+              current = '';
+            } else {
+              // Regular whitespace in expression, keep it
+              current += ch;
+            }
           } else {
             current += ch;
           }
@@ -433,13 +568,16 @@ export function parseBNGL(code: string, options: ParseBNGLOptions = {}): BNGLMod
       };
 
       const allRateTokens = tokenizeRateChunk(rateChunk);
-      
+
       const constraints: string[] = [];
       const rateConstants: string[] = [];
-      
+
+      let deleteMolecules = false;
       allRateTokens.forEach(token => {
         if (token.startsWith('exclude_reactants') || token.startsWith('include_reactants')) {
           constraints.push(token);
+        } else if (token === 'DeleteMolecules' || token === 'MoveMolecules') {
+          deleteMolecules = true;
         } else {
           rateConstants.push(token);
         }
@@ -461,6 +599,7 @@ export function parseBNGL(code: string, options: ParseBNGLOptions = {}): BNGLMod
         isBidirectional,
         reverseRate: isBidirectional ? reverseRateLabel : undefined,
         constraints,
+        deleteMolecules,
         comment: extractInlineComment(statement),
       });
     });
@@ -468,11 +607,15 @@ export function parseBNGL(code: string, options: ParseBNGLOptions = {}): BNGLMod
 
   const parametersMap = new Map(Object.entries(model.parameters));
 
+  // Create a set of observable names for use in rate expression evaluation
+  const observableNames = new Set(model.observables.map(o => o.name));
+
   model.reactionRules.forEach((rule) => {
     maybeCancel();
     // FIX: Use evaluateExpression to handle math in rates (e.g. "2.0 * 602.0")
-    const forwardRate = BNGLParser.evaluateExpression(rule.rate, parametersMap);
-    
+    // Pass observable names so expressions with observables can validate syntactically
+    const forwardRate = BNGLParser.evaluateExpression(rule.rate, parametersMap, observableNames);
+
     if (!Number.isNaN(forwardRate)) {
       model.reactions.push({
         reactants: rule.reactants,
@@ -483,7 +626,7 @@ export function parseBNGL(code: string, options: ParseBNGLOptions = {}): BNGLMod
     }
 
     if (rule.isBidirectional && rule.reverseRate) {
-      const reverseRate = BNGLParser.evaluateExpression(rule.reverseRate, parametersMap);
+      const reverseRate = BNGLParser.evaluateExpression(rule.reverseRate, parametersMap, observableNames);
       if (!Number.isNaN(reverseRate)) {
         model.reactions.push({
           reactants: rule.products,
@@ -494,6 +637,77 @@ export function parseBNGL(code: string, options: ParseBNGLOptions = {}): BNGLMod
       }
     }
   });
+
+  // Parse actions like generate_network
+  const actionKeywords = ['generate_network', 'simulate'];
+
+  for (const keyword of actionKeywords) {
+    const regex = new RegExp(`${keyword}\\s*\\(`, 'g');
+    let match;
+    while ((match = regex.exec(code)) !== null) {
+      const startIndex = match.index + match[0].length;
+      let depth = 1;
+      let endIndex = startIndex;
+      for (let i = startIndex; i < code.length; i++) {
+        if (code[i] === '(') depth++;
+        else if (code[i] === ')') depth--;
+
+        if (depth === 0) {
+          endIndex = i;
+          break;
+        }
+      }
+
+      if (depth === 0) {
+        const argsStr = code.substring(startIndex, endIndex);
+
+        if (keyword === 'generate_network') {
+          try {
+            const options: any = {};
+
+            // Extract max_stoich
+            const maxStoichMatch = argsStr.match(/max_stoich\s*=>\s*({[^}]+})/);
+            if (maxStoichMatch) {
+              const stoichContent = maxStoichMatch[1];
+              const stoichMap: Record<string, number> = {};
+              const pairs = stoichContent.match(/([a-zA-Z0-9_]+)\s*=>\s*(\d+)/g);
+              if (pairs) {
+                pairs.forEach(p => {
+                  const [mol, val] = p.split('=>').map(s => s.trim());
+                  stoichMap[mol] = parseInt(val, 10);
+                });
+              }
+              options.maxStoich = stoichMap;
+            }
+
+            // Extract max_agg
+            const maxAggMatch = argsStr.match(/max_agg\s*=>\s*(\d+)/);
+            if (maxAggMatch) {
+              options.maxAgg = parseInt(maxAggMatch[1], 10);
+            }
+
+            // Extract max_iter
+            const maxIterMatch = argsStr.match(/max_iter\s*=>\s*(\d+)/);
+            if (maxIterMatch) {
+              options.maxIterations = parseInt(maxIterMatch[1], 10);
+            }
+
+            // Extract overwrite
+            const overwriteMatch = argsStr.match(/overwrite\s*=>\s*(\d+)/);
+            if (overwriteMatch) {
+              options.overwrite = parseInt(overwriteMatch[1], 10) === 1;
+            }
+
+            model.networkOptions = options;
+            logDebug('[parseBNGL] Parsed network options:', options);
+
+          } catch (e) {
+            console.warn('[parseBNGL] Failed to parse generate_network options', e);
+          }
+        }
+      }
+    }
+  }
 
   return model;
 }

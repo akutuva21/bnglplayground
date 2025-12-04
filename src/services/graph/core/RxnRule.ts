@@ -1,6 +1,6 @@
 // graph/core/RxnRule.ts
-import { SpeciesGraph } from './SpeciesGraph';
-import { Molecule } from './Molecule';
+import { SpeciesGraph } from './SpeciesGraph.ts';
+import { Molecule } from './Molecule.ts';
 
 export class RxnRule {
   name: string;
@@ -31,7 +31,8 @@ export class RxnRule {
     this.reactants = reactants;
     this.products = products;
     this.rateConstant = rateConstant;
-    this.allowsIntramolecular = options.allowsIntramolecular ?? false;
+    // Default to true to match native BNG behavior (allows intramolecular binding)
+    this.allowsIntramolecular = options.allowsIntramolecular ?? true;
     this.deleteBonds = [];
     this.addBonds = [];
     this.changeStates = [];
@@ -98,10 +99,10 @@ export class RxnRule {
         const type = match[1];
         const index = parseInt(match[2], 10);
         const patternStr = match[3];
-        
+
         try {
           const pattern = parser(patternStr);
-          
+
           // BNGL uses 1-based indexing, convert to 0-based
           const reactantIndex = index - 1;
 

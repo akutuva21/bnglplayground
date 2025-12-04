@@ -9,7 +9,7 @@ import {
   convertSpeciesGraph,
   extractBonds,
   parseSpeciesGraphs,
-  snapshotComponentStates,
+  detectStateChanges,
 } from './speciesGraphUtils';
 
 const collectMoleculeCounts = (graphs: SpeciesGraph[]): Map<string, number> => {
@@ -81,23 +81,15 @@ export const buildCompactRule = (rule: ReactionRule, displayName?: string): Comp
     }
   });
 
-  const reactantStates = snapshotComponentStates(reactantGraphs);
-  const productStates = snapshotComponentStates(productGraphs);
+  // Use the new positional state change detection
+  const stateChanges = detectStateChanges(reactantGraphs, productGraphs);
 
-  productStates.forEach((productState, key) => {
-    const reactantState = reactantStates.get(key);
-    const fromState = reactantState?.state ?? 'unspecified';
-    const toState = productState.state ?? 'unspecified';
-
-    if (fromState === toState) {
-      return;
-    }
-
+  stateChanges.forEach((change) => {
     operations.push({
       type: 'state_change',
-      target: `${productState.molecule}.${productState.component}`,
-      from: fromState,
-      to: toState,
+      target: `${change.molecule}.${change.component}`,
+      from: change.fromState,
+      to: change.toState,
     });
   });
 

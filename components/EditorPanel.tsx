@@ -11,20 +11,51 @@ import { RadioGroup } from './ui/RadioGroup';
 function formatBNGLMini(code: string): string {
   if (!code) return '';
   const normalized = code.replace(/\r\n/g, '\n');
-  const lines = normalized
-    .split('\n')
-    .map((line) => line.replace(/#.*/g, '').trimEnd());
+  const lines = normalized.split('\n');
   const out: string[] = [];
   let blank = false;
+  let insideBlock = false;
+  
+  // Block keywords that mark the start of indented sections
+  const blockStarts = ['begin', 'setOption'];
+  const blockEnds = ['end'];
+  
   for (const ln of lines) {
-    const trimmed = ln.trim();
+    // Strip comments and trailing whitespace
+    const withoutComment = ln.replace(/#.*/g, '').trimEnd();
+    const trimmed = withoutComment.trim();
+    
+    // Handle blank lines (collapse multiple blanks into one)
     if (!trimmed) {
       if (!blank) out.push('');
       blank = true;
       continue;
     }
     blank = false;
-    out.push(trimmed.replace(/\s+/g, ' '));
+    
+    // Check if this line starts or ends a block
+    const isBlockStart = blockStarts.some(kw => trimmed.toLowerCase().startsWith(kw.toLowerCase()));
+    const isBlockEnd = blockEnds.some(kw => trimmed.toLowerCase().startsWith(kw.toLowerCase()));
+    
+    // Update block state
+    if (isBlockEnd) {
+      insideBlock = false;
+    }
+    
+    // Format the line content (collapse multiple spaces, but preserve structure)
+    const formattedContent = trimmed.replace(/\s+/g, ' ');
+    
+    // Apply indentation: 1 tab inside blocks, none for block start/end
+    if (insideBlock && !isBlockStart && !isBlockEnd) {
+      out.push('\t' + formattedContent);
+    } else {
+      out.push(formattedContent);
+    }
+    
+    // After processing, update block state for next line
+    if (isBlockStart) {
+      insideBlock = true;
+    }
   }
   return out.join('\n').trim() + '\n';
 }
@@ -41,6 +72,8 @@ interface EditorPanelProps {
   modelExists: boolean;
   validationWarnings: ValidationWarning[];
   editorMarkers: EditorMarker[];
+  loadedModelName?: string | null;
+  onModelNameChange?: (name: string | null) => void;
   selection?: {
     startLineNumber: number;
     endLineNumber: number;
@@ -120,6 +153,8 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
   modelExists,
   validationWarnings,
   editorMarkers,
+  loadedModelName,
+  onModelNameChange,
   selection,
 }) => {
   const [isGalleryOpen, setIsGalleryOpen] = useState(false);
@@ -135,13 +170,16 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
       const reader = new FileReader();
       reader.onload = (e) => {
         onCodeChange(e.target?.result as string);
+        // Clear model name when loading from file
+        onModelNameChange?.(file.name.replace(/\.bngl$/i, ''));
       };
       reader.readAsText(file);
     }
   };
 
-  const handleLoadExample = (exampleCode: string) => {
+  const handleLoadExample = (exampleCode: string, modelName?: string) => {
     onCodeChange(exampleCode);
+    onModelNameChange?.(modelName ?? null);
     setIsGalleryOpen(false);
   };
 
@@ -168,18 +206,23 @@ export const EditorPanel: React.FC<EditorPanelProps> = ({
           </div>
         )}
         {/* Model parse status bar */}
-        <div className="mb-2 flex items-center gap-3">
+        <div className="mb-2 flex items-center gap-3 flex-wrap">
           {validationWarnings.length === 0 && modelExists ? (
-            <div className="inline-flex items-center gap-2 rounded px-3 py-1 bg-green-50 text-green-700 text-sm">✅ Parsed OK</div>
+            <div className="inline-flex items-center gap-2 rounded px-3 py-1 bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-300 text-sm">✅ Parsed OK</div>
           ) : modelExists && validationWarnings.some(w => w.severity === 'error') ? (
-            <div className="inline-flex items-center gap-2 rounded px-3 py-1 bg-red-50 text-red-700 text-sm">❌ Parsed with errors</div>
+            <div className="inline-flex items-center gap-2 rounded px-3 py-1 bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300 text-sm">❌ Parsed with errors</div>
           ) : modelExists && validationWarnings.length > 0 ? (
-            <div className="inline-flex items-center gap-2 rounded px-3 py-1 bg-amber-50 text-amber-800 text-sm">⚠️ Parsed with warnings</div>
+            <div className="inline-flex items-center gap-2 rounded px-3 py-1 bg-amber-50 dark:bg-amber-900/30 text-amber-800 dark:text-amber-300 text-sm">⚠️ Parsed with warnings</div>
           ) : (
-            <div className="inline-flex items-center gap-2 rounded px-3 py-1 bg-slate-50 text-slate-700 text-sm">📝 No model parsed</div>
+            <div className="inline-flex items-center gap-2 rounded px-3 py-1 bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-sm">📝 No model parsed</div>
+          )}
+          {loadedModelName && (
+            <div className="inline-flex items-center gap-2 rounded px-3 py-1 bg-primary-50 dark:bg-primary-900/30 text-primary-700 dark:text-primary-300 text-sm font-medium">
+              📁 {loadedModelName}
+            </div>
           )}
           {validationWarnings.length > 0 && (
-            <button onClick={onParse} className="text-xs underline text-slate-600">Re-parse</button>
+            <button onClick={onParse} className="text-xs underline text-slate-600 dark:text-slate-400">Re-parse</button>
           )}
         </div>
         <div className="relative flex-1 min-h-[16rem] overflow-hidden">

@@ -3,7 +3,7 @@ import type { RuleFlowEdge, RuleFlowGraph, RuleFlowNode } from '../../types/visu
 import {
   extractBonds,
   parseSpeciesGraphs,
-  snapshotComponentStates,
+  detectStateChanges as detectStateChangesUtil,
 } from './speciesGraphUtils';
 import { colorFromName } from './colorUtils';
 
@@ -74,24 +74,10 @@ const detectStateChanges = (rule: ReactionRule): string[] => {
   const reactantGraphs = parseSpeciesGraphs(rule.reactants);
   const productGraphs = parseSpeciesGraphs(rule.products);
 
-  const reactantStates = snapshotComponentStates(reactantGraphs);
-  const productStates = snapshotComponentStates(productGraphs);
+  // Use the new positional state change detection
+  const changes = detectStateChangesUtil(reactantGraphs, productGraphs);
 
-  const changes: string[] = [];
-
-  productStates.forEach((productState, key) => {
-    const reactantState = reactantStates.get(key);
-    const fromState = reactantState?.state ?? 'unspecified';
-    const toState = productState.state ?? 'unspecified';
-
-    if (fromState === toState) {
-      return;
-    }
-
-    changes.push(`${productState.molecule}.${productState.component}`);
-  });
-
-  return changes;
+  return changes.map((change) => `${change.molecule}.${change.component}`);
 };
 
 export const classifyRule = (rule: ReactionRule): RuleFlowNode['type'] => {

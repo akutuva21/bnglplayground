@@ -69,7 +69,6 @@ import polymerDraft from './published-models/tutorials/polymer_draft.bngl?raw';
 import simple from './published-models/tutorials/simple.bngl?raw';
 import toy1 from './published-models/tutorials/toy1.bngl?raw';
 import toy2 from './published-models/tutorials/toy2.bngl?raw';
-import trafficLight from './published-models/tutorials/traffic_light.bngl?raw';
 
 // Test Models
 import aktSignaling from './example-models/akt-signaling.bngl?raw';
@@ -140,6 +139,109 @@ export const CHART_COLORS = [
 
 export const INITIAL_BNGL_CODE = simple;
 
+// Models that successfully parse and simulate with BNG2.pl (ODE/SSA compatible)
+// Models not in this list either:
+// 1. Use NFsim (network-free simulation) - not supported in browser
+// 2. Use deprecated/non-standard syntax
+// 3. Have missing dependencies or other BNG2.pl errors
+const BNG2_COMPATIBLE_MODELS = new Set([
+  // Published models that work with BNG2.pl
+  'Barua_2013',
+  'Barua_2007',
+  'Barua_2009',
+  'Blinov_2006',
+  'Lang_2024',
+  'An_2009',
+  'innate_immunity',
+  'Korwek_2023',
+  'Model_ZAP',
+  // Parse-only models (no simulate command, but valid BNGL)
+  'Hat_2016',
+  'Pekalski_2013',
+  'Dushek_2011',
+  'Zhang_2021',
+  'Rule_based_egfr_tutorial',
+  'BaruaBCR_2012',
+  'Jaruszewicz-Blonska_2023',
+  'Mukhopadhyay_2013',
+  // All test/example models (generated to be BNG2.pl compatible)
+  'akt-signaling',
+  'allosteric-activation',
+  'apoptosis-cascade',
+  'auto-activation-loop',
+  'beta-adrenergic-response',
+  'bistable-toggle-switch',
+  'blood-coagulation-thrombin',
+  'brusselator-oscillator',
+  'calcium-spike-signaling',
+  'cell-cycle-checkpoint',
+  'chemotaxis-signal-transduction',
+  'circadian-oscillator',
+  'competitive-enzyme-inhibition',
+  'complement-activation-cascade',
+  'cooperative-binding',
+  'dna-damage-repair',
+  'dual-site-phosphorylation',
+  'egfr-signaling-pathway',
+  'er-stress-response',
+  'gene-expression-toggle',
+  'glycolysis-branch-point',
+  'hematopoietic-growth-factor',
+  'hypoxia-response-signaling',
+  'immune-synapse-formation',
+  'inflammasome-activation',
+  'insulin-glucose-homeostasis',
+  'interferon-signaling',
+  'jak-stat-cytokine-signaling',
+  'lac-operon-regulation',
+  'lipid-mediated-pip3-signaling',
+  'mapk-signaling-cascade',
+  'michaelis-menten-kinetics',
+  'mtor-signaling',
+  'myogenic-differentiation',
+  'negative-feedback-loop',
+  'neurotransmitter-release',
+  'nfkb-feedback',
+  'notch-delta-lateral-inhibition',
+  'oxidative-stress-response',
+  'p53-mdm2-oscillator',
+  'phosphorelay-chain',
+  'platelet-activation',
+  'predator-prey-dynamics',
+  'quorum-sensing-circuit',
+  'rab-gtpase-cycle',
+  'repressilator-oscillator',
+  'retinoic-acid-signaling',
+  'signal-amplification-cascade',
+  'simple-dimerization',
+  'sir-epidemic-model',
+  'smad-tgf-beta-signaling',
+  'stress-response-adaptation',
+  'synaptic-plasticity-ltp',
+  't-cell-activation',
+  'tnf-induced-apoptosis',
+  'two-component-system',
+  'vegf-angiogenesis',
+  'viral-sensing-innate-immunity',
+  'wnt-beta-catenin-signaling',
+  'wound-healing-pdgf-signaling',
+]);
+
+// Models that require NFsim (network-free simulation) - kept for reference but not displayed
+const NFSIM_MODELS = new Set([
+  'Blinov_ran',
+  'McMillan_2021',
+  'Blinov_egfr',
+  'Ligon_2014',
+  'Model_ZAP', // Also has generate_network, so it's in compatible list
+  'polymer',
+  'polymer_draft',
+]);
+
+// Helper to filter models to only BNG2.pl compatible ones
+const filterCompatibleModels = (models: Example[]): Example[] => 
+  models.filter(m => BNG2_COMPATIBLE_MODELS.has(m.id));
+
 const CELL_REGULATION: Example[] = [
   {
     id: 'Barua_2013',
@@ -171,8 +273,8 @@ const CELL_REGULATION: Example[] = [
   },
   {
     id: 'notch',
-    name: 'notch',
-    description: 'BNGL model: notch',
+    name: 'Notch',
+    description: 'BNGL model: Notch',
     code: notch,
     tags: ['published', 'cell regulation'],
   },
@@ -199,29 +301,29 @@ const CELL_REGULATION: Example[] = [
   },
   {
     id: 'vilar_2002',
-    name: 'vilar 2002',
-    description: 'BNGL model: vilar 2002',
+    name: 'Vilar 2002',
+    description: 'BNGL model: Vilar 2002',
     code: vilar2002,
     tags: ['published', 'cell regulation'],
   },
   {
     id: 'vilar_2002b',
-    name: 'vilar 2002b',
-    description: 'BNGL model: vilar 2002b',
+    name: 'Vilar 2002b',
+    description: 'BNGL model: Vilar 2002b',
     code: vilar2002b,
     tags: ['published', 'cell regulation'],
   },
   {
     id: 'vilar_2002c',
-    name: 'vilar 2002c',
-    description: 'BNGL model: vilar 2002c',
+    name: 'Vilar 2002c',
+    description: 'BNGL model: Vilar 2002c',
     code: vilar2002c,
     tags: ['published', 'cell regulation'],
   },
   {
     id: 'wnt',
-    name: 'wnt',
-    description: 'BNGL model: wnt',
+    name: 'Wnt',
+    description: 'BNGL model: Wnt',
     code: wnt,
     tags: ['published', 'cell regulation'],
   },
@@ -307,15 +409,15 @@ const COMPLEX_MODELS: Example[] = [
   },
   {
     id: 'mapk-dimers',
-    name: 'mapk dimers',
-    description: 'BNGL model: mapk dimers',
+    name: 'MAPK Dimers',
+    description: 'BNGL model: MAPK Dimers',
     code: mapkDimers,
     tags: ['published', 'complex models'],
   },
   {
     id: 'mapk-monomers',
-    name: 'mapk monomers',
-    description: 'BNGL model: mapk monomers',
+    name: 'MAPK Monomers',
+    description: 'BNGL model: MAPK Monomers',
     code: mapkMonomers,
     tags: ['published', 'complex models'],
   },
@@ -432,8 +534,8 @@ const IMMUNE_SIGNALING: Example[] = [
   },
   {
     id: 'blbr',
-    name: 'blbr',
-    description: 'BNGL model: blbr',
+    name: 'BLBR',
+    description: 'BNGL model: BLBR',
     code: blbr,
     tags: ['published', 'immune signaling'],
   },
@@ -460,14 +562,14 @@ const IMMUNE_SIGNALING: Example[] = [
   },
   {
     id: 'fceri_2003',
-    name: 'fceri 2003',
-    description: 'BNGL model: fceri 2003',
+    name: 'FceRI 2003',
+    description: 'BNGL model: FceRI 2003',
     code: fceri2003,
     tags: ['published', 'immune signaling'],
   },
   {
     id: 'innate_immunity',
-    name: 'innate immunity',
+    name: 'Innate Immunity',
     description: 'Model from Signaling (2023). Science Signaling (2023).',
     code: innateImmunity,
     tags: ['published', 'immune signaling'],
@@ -502,8 +604,8 @@ const IMMUNE_SIGNALING: Example[] = [
   },
   {
     id: 'tlbr',
-    name: 'tlbr',
-    description: 'BNGL model: tlbr',
+    name: 'TLBR',
+    description: 'BNGL model: TLBR',
     code: tlbr,
     tags: ['published', 'immune signaling'],
   },
@@ -550,13 +652,6 @@ const TUTORIALS: Example[] = [
     name: 'toy2',
     description: 'BNGL model: toy2',
     code: toy2,
-    tags: ['published', 'tutorials'],
-  },
-  {
-    id: 'traffic_light',
-    name: 'traffic light',
-    description: 'BNGL model: traffic light',
-    code: trafficLight,
     tags: ['published', 'tutorials'],
   },
 ];
@@ -991,7 +1086,8 @@ export interface ModelCategory {
   models: Example[];
 }
 
-export const MODEL_CATEGORIES: ModelCategory[] = [
+// Raw categories with all models (including incompatible ones)
+const RAW_MODEL_CATEGORIES: ModelCategory[] = [
   {
     id: 'cell-regulation',
     name: 'Cell Regulation & Transport',
@@ -1030,5 +1126,14 @@ export const MODEL_CATEGORIES: ModelCategory[] = [
   },
 ];
 
-// Flat list of all models
+// Filtered categories with only BNG2.pl compatible models (ODE/SSA)
+// Categories with no compatible models are excluded
+export const MODEL_CATEGORIES: ModelCategory[] = RAW_MODEL_CATEGORIES
+  .map(cat => ({
+    ...cat,
+    models: filterCompatibleModels(cat.models),
+  }))
+  .filter(cat => cat.models.length > 0);
+
+// Flat list of all compatible models
 export const EXAMPLES: Example[] = MODEL_CATEGORIES.flatMap(cat => cat.models);

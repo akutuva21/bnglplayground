@@ -1,5 +1,5 @@
 // graph/core/Molecule.ts
-import { Component } from './Component';
+import { Component } from './Component.ts';
 
 export class Molecule {
   name: string;

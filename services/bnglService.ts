@@ -98,7 +98,7 @@ class BnglService {
 
   // Handle progress/warning notifications separately and do not resolve/reject any pending promise
   const respType = type as unknown as string;
-  if (respType === 'progress') {
+  if (respType === 'progress' || respType === 'generate_network_progress') {
         for (const cb of this.progressListeners) {
           try {
             cb(payload);

@@ -2,6 +2,7 @@ import React from 'react';
 import { useTheme } from '../hooks/useTheme';
 import { MoonIcon } from './icons/MoonIcon';
 import { SunIcon } from './icons/SunIcon';
+import { EmailIcon } from './icons/EmailIcon';
 import { Button } from './ui/Button';
 
 interface HeaderProps {
@@ -21,14 +22,14 @@ export const Header: React.FC<HeaderProps> = ({ onAboutClick, onTutorialsClick, 
           <div className="flex items-center gap-2">
             <div className="relative flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded bg-white shadow-sm ring-1 ring-slate-200 dark:bg-slate-700 dark:ring-slate-600">
               <img
-                src="/bnglplayground/logo.jpg"
+                src="/bngplayground/logo.jpg"
                 alt="BioNetGen Visualizer logo"
                 className="h-full w-full object-contain object-center"
                 loading="lazy"
               />
             </div>
             <div className="flex flex-col">
-              <h1 className="text-xl font-semibold leading-tight text-slate-800 dark:text-slate-100 sm:text-2xl">BioNetGen Web Simulator</h1>
+              <h1 className="text-xl font-semibold leading-tight text-slate-800 dark:text-slate-100 sm:text-2xl">BioNetGen Playground</h1>
               <p className="text-sm text-slate-500 dark:text-slate-300 sm:text-base">Write BNGL, parse models, simulate ODE/SSA, and visualize the results.</p>
             </div>
           </div>
@@ -45,6 +46,14 @@ export const Header: React.FC<HeaderProps> = ({ onAboutClick, onTutorialsClick, 
             <div className="text-xs text-slate-500 dark:text-slate-300 leading-tight">
               New here? Start with <strong>Simple Dimerization</strong> → Simulate
             </div>
+            <a
+              href="mailto:bionetgen.main@gmail.com?subject=BNG%20Playground%20Question"
+              className="p-2 rounded-full text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-700 hover:text-teal-600 dark:hover:text-teal-400 transition-colors"
+              aria-label="Email us with questions"
+              title="Questions? Email bionetgen.main@gmail.com"
+            >
+              <EmailIcon className="w-6 h-6" />
+            </a>
             <button
               onClick={toggleTheme}
               className="p-2 rounded-full text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-700"

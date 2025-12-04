@@ -5,10 +5,27 @@ import { Input } from './ui/Input';
 import { SearchIcon } from './icons/SearchIcon';
 import { MODEL_CATEGORIES } from '../constants';
 
+// Helper to convert model names to Title Case
+// Handles special acronyms like MAPK, EGFR, etc.
+const toTitleCase = (str: string): string => {
+  // List of known acronyms that should stay uppercase
+  const acronyms = ['mapk', 'egfr', 'akt', 'tlbr', 'blbr', 'bcr', 'tcr', 'fceri', 'nfkb', 'tnf', 'dna', 'rna', 'ode', 'ssa', 'pde'];
+  
+  return str.split(' ').map(word => {
+    const lowerWord = word.toLowerCase();
+    // Check if it's a known acronym
+    if (acronyms.includes(lowerWord)) {
+      return word.toUpperCase();
+    }
+    // Otherwise capitalize first letter
+    return word.charAt(0).toUpperCase() + word.slice(1);
+  }).join(' ');
+};
+
 interface ExampleGalleryModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSelect: (code: string) => void;
+  onSelect: (code: string, modelName?: string) => void;
 }
 
 export const ExampleGalleryModal: React.FC<ExampleGalleryModalProps> = ({ isOpen, onClose, onSelect }) => {
@@ -43,10 +60,10 @@ export const ExampleGalleryModal: React.FC<ExampleGalleryModalProps> = ({ isOpen
   }, [isOpen]);
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="Published BNGL Models" size="3xl">
+    <Modal isOpen={isOpen} onClose={onClose} title="BNGL Models" size="3xl">
       <div className="mt-4">
         <p className="text-sm text-slate-600 dark:text-slate-300 mb-4">
-          Browse {MODEL_CATEGORIES.reduce((sum, cat) => sum + cat.models.length, 0)} published and tutorial models from the BioNetGen community.
+          Browse {MODEL_CATEGORIES.reduce((sum, cat) => sum + cat.models.length, 0)} models compatible with BNG2.pl (ODE/SSA simulation).
         </p>
         
         {/* Search */}
@@ -97,7 +114,7 @@ export const ExampleGalleryModal: React.FC<ExampleGalleryModalProps> = ({ isOpen
                 )}
               </div>
               <div className="flex-grow">
-                <h3 className="font-semibold text-slate-800 dark:text-slate-100">{example.name}</h3>
+                <h3 className="font-semibold text-slate-800 dark:text-slate-100">{toTitleCase(example.name)}</h3>
                 <p className="text-xs text-slate-600 dark:text-slate-300 mt-1 line-clamp-2">{example.description}</p>
                 <div className="flex flex-wrap gap-1 mt-2">
                   {example.tags?.slice(0, 2).map(tag => (
@@ -108,7 +125,7 @@ export const ExampleGalleryModal: React.FC<ExampleGalleryModalProps> = ({ isOpen
                 </div>
               </div>
               <button 
-                onClick={() => onSelect(example.code)}
+                onClick={() => onSelect(example.code, toTitleCase(example.name))}
                 className="mt-3 w-full text-center px-4 py-2 text-sm font-semibold bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 rounded-md transition-colors text-slate-800 dark:text-slate-100"
               >
                 Load Model

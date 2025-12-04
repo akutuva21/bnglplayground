@@ -1,9 +1,5 @@
-// graph/core/Matcher.ts
-import { SpeciesGraph } from './SpeciesGraph';
-import { Component } from './Component';
-
-// ENABLE LOGGING
-const shouldLogGraphMatcher = true;
+import { SpeciesGraph } from './SpeciesGraph.ts';
+import { Component } from './Component.ts';
 
 const adjacencyKey = (molIdx: number, compIdx: number): string => `${molIdx}.${compIdx}`;
 
@@ -34,6 +30,13 @@ export interface MatchMap {
   moleculeMap: Map<number, number>;      // pattern mol => target mol
   componentMap: Map<string, string>;     // "pMol.pCompIdx" => "tMol.tCompIdx"
 }
+
+// Disable verbose logging in production to prevent console spam
+const shouldLogGraphMatcher = false;
+
+// Safety limits to prevent infinite loops in pathological cases
+const MAX_VF2_ITERATIONS = 100000;
+const MAX_COMPONENT_ITERATIONS = 10000;
 
 /**
  * BioNetGen: Map::findMap() - VF2 subgraph isomorphism
@@ -218,7 +221,8 @@ export class GraphMatcher {
     const ordering = this.computeNodeOrdering(pattern, target);
     const state = new VF2State(pattern, target, ordering);
 
-    this.vf2Backtrack(state, matches);
+    const iterationCount = { value: 0 };
+    this.vf2Backtrack(state, matches, iterationCount);
 
     if (shouldLogGraphMatcher) {
       // console.log(
@@ -237,9 +241,21 @@ export class GraphMatcher {
   }
 
   /**
-   * VF2 recursive backtracking
+   * VF2 recursive backtracking with iteration limit to prevent infinite loops
    */
-  private static vf2Backtrack(state: VF2State, matches: MatchMap[]): void {
+  private static vf2Backtrack(
+    state: VF2State,
+    matches: MatchMap[],
+    iterationCount: { value: number }
+  ): void {
+    iterationCount.value++;
+    if (iterationCount.value > MAX_VF2_ITERATIONS) {
+      console.warn(
+        `[GraphMatcher] VF2 iteration limit exceeded (${MAX_VF2_ITERATIONS}). ` +
+        `Pattern may be too complex or combinatorially explosive. Returning partial results.`
+      );
+      return;
+    }
     if (state.isComplete()) {
       matches.push(state.getMatch());
       return;
@@ -247,9 +263,13 @@ export class GraphMatcher {
 
     const candidates = state.getCandidatePairs();
     for (const [pNode, tNode] of candidates) {
+      // Early exit if we've hit the iteration limit
+      if (iterationCount.value > MAX_VF2_ITERATIONS) {
+        return;
+      }
       if (state.isFeasible(pNode, tNode)) {
         state.addPair(pNode, tNode);
-        this.vf2Backtrack(state, matches);
+        this.vf2Backtrack(state, matches, iterationCount);
         state.removePair(pNode, tNode);
       }
     }
@@ -373,7 +393,6 @@ class VF2State {
     const targetFrontier = this.computeTargetFrontier();
 
     const patternCandidates = patternFrontier.size > 0 ? patternFrontier : this.getUncoveredPatternNodes();
-    const targetCandidates = targetFrontier.size > 0 ? targetFrontier : this.getUncoveredTargetNodes();
 
     let nextPatternIdx: number | undefined;
     for (const idx of this.nodeOrdering) {
@@ -386,6 +405,18 @@ class VF2State {
     if (nextPatternIdx === undefined) {
       return pairs;
     }
+
+    // KEY FIX: When the next pattern node is NOT in the pattern frontier (i.e., it's from
+    // a disconnected component in the pattern), we must consider ALL uncovered target nodes,
+    // not just the target frontier. This is essential for patterns like "A.B" where A and B
+    // are not directly bonded but must be in the same species/complex.
+    // 
+    // BNG semantics: "A.B" means A and B are in the same complex, but they don't need to
+    // be directly bonded. They could be connected through intermediate molecules.
+    const nextPatternNodeInFrontier = patternFrontier.has(nextPatternIdx);
+    const targetCandidates = (targetFrontier.size > 0 && nextPatternNodeInFrontier)
+      ? targetFrontier
+      : this.getUncoveredTargetNodes();
 
     const sortedTargetCandidates = Array.from(targetCandidates).sort((a, b) => a - b);
     for (const tIdx of sortedTargetCandidates) {
@@ -421,7 +452,7 @@ class VF2State {
     const componentMapping = this.matchComponents(pMol, tMol);
     if (!componentMapping) {
       if (shouldLogGraphMatcher) {
-          console.log(`[GraphMatcher] Component match failed for P${pMol} -> T${tMol}`);
+        console.log(`[GraphMatcher] Component match failed for P${pMol} -> T${tMol}`);
       }
       return false;
     }
@@ -474,7 +505,6 @@ class VF2State {
 
     return true;
   }
-
   /**
    * VF2++ Algorithm 2 label consistency check. We compare the unmatched neighbourhoods (T1' and T2')
    * induced by already mapped nodes plus the candidate pair (pMol, tMol). Every label/compartment
@@ -657,8 +687,11 @@ class VF2State {
 
     const assignment = new Map<number, number>();
     const usedTargets = new Set<number>();
+    const iterationCount = { value: 0 };
 
-    const success = this.assignComponentsBacktrack(pMolIdx, tMolIdx, order, 0, assignment, usedTargets);
+    const success = this.assignComponentsBacktrack(
+      pMolIdx, tMolIdx, order, 0, assignment, usedTargets, iterationCount
+    );
     return success ? assignment : null;
   }
 
@@ -668,8 +701,18 @@ class VF2State {
     order: number[],
     orderIdx: number,
     assignment: Map<number, number>,
-    usedTargets: Set<number>
+    usedTargets: Set<number>,
+    iterationCount: { value: number }
   ): boolean {
+    iterationCount.value++;
+    if (iterationCount.value > MAX_COMPONENT_ITERATIONS) {
+      console.warn(
+        `[GraphMatcher] Component iteration limit exceeded for molecule ${pMolIdx}. ` +
+        `May have too many symmetric components.`
+      );
+      return false;
+    }
+
     if (orderIdx >= order.length) {
       return true;
     }
@@ -706,9 +749,14 @@ class VF2State {
     }
 
     for (const tCompIdx of candidates) {
+      // Early exit if we've hit the iteration limit
+      if (iterationCount.value > MAX_COMPONENT_ITERATIONS) {
+        return false;
+      }
+
       if (!this.isComponentAssignmentValid(pMolIdx, pCompIdx, tMolIdx, tCompIdx, assignment)) {
         if (shouldLogGraphMatcher) {
-            // console.log(`[GraphMatcher] Assignment invalid: P${pMolIdx}.${pCompIdx} -> T${tMolIdx}.${tCompIdx}`);
+          // console.log(`[GraphMatcher] Assignment invalid: P${pMolIdx}.${pCompIdx} -> T${tMolIdx}.${tCompIdx}`);
         }
         continue;
       }
@@ -716,7 +764,9 @@ class VF2State {
       assignment.set(pCompIdx, tCompIdx);
       usedTargets.add(tCompIdx);
 
-      if (this.assignComponentsBacktrack(pMolIdx, tMolIdx, order, orderIdx + 1, assignment, usedTargets)) {
+      if (this.assignComponentsBacktrack(
+        pMolIdx, tMolIdx, order, orderIdx + 1, assignment, usedTargets, iterationCount
+      )) {
         return true;
       }
 
@@ -782,6 +832,45 @@ class VF2State {
     return this.usedTargetsScratch.join(',');
   }
 
+  /**
+   * Compute a signature for a component that identifies structurally equivalent components.
+   * Used for symmetry-breaking optimization to avoid trying equivalent permutations.
+   */
+  private getComponentSignature(pMolIdx: number, pCompIdx: number): string {
+    const comp = this.pattern.molecules[pMolIdx].components[pCompIdx];
+    // Include name, state, wildcard, and whether it has bonds
+    const bondIndicator = comp.edges.size > 0 ? 'B' : (comp.wildcard || 'U');
+    return `${comp.name}|${comp.state ?? '?'}|${bondIndicator}`;
+  }
+
+  /**
+   * Find the minimum target index that a pattern component with a given signature
+   * has already been assigned to. Used for symmetry-breaking: when multiple pattern
+   * components are equivalent, we constrain later ones to map to higher target indices.
+   */
+  private getSymmetryBreakingMinIndex(
+    pMolIdx: number,
+    pCompIdx: number,
+    assignment: Map<number, number>
+  ): number {
+    const mySignature = this.getComponentSignature(pMolIdx, pCompIdx);
+    let minIdx = -1;
+
+    // Find all pattern components with the same signature that come BEFORE this one
+    // and have already been assigned
+    for (let i = 0; i < pCompIdx; i++) {
+      const otherSignature = this.getComponentSignature(pMolIdx, i);
+      if (otherSignature === mySignature && assignment.has(i)) {
+        const targetIdx = assignment.get(i)!;
+        if (targetIdx > minIdx) {
+          minIdx = targetIdx;
+        }
+      }
+    }
+
+    return minIdx;
+  }
+
   private componentPriority(comp: Component): number {
     let score = 0;
     score += comp.edges.size * 10;
@@ -802,14 +891,14 @@ class VF2State {
   ): boolean {
     if (!this.componentBondStateCompatible(pMolIdx, pCompIdx, tMolIdx, tCompIdx)) {
       if (shouldLogGraphMatcher) {
-          console.log(`[GraphMatcher] Bond state incompatible: P${pMolIdx}.${pCompIdx} vs T${tMolIdx}.${tCompIdx}`);
+        console.log(`[GraphMatcher] Bond state incompatible: P${pMolIdx}.${pCompIdx} vs T${tMolIdx}.${tCompIdx}`);
       }
       return false;
     }
 
     if (!this.componentBondConsistencySatisfied(pMolIdx, pCompIdx, tMolIdx, tCompIdx, currentAssignments)) {
       if (shouldLogGraphMatcher) {
-          console.log(`[GraphMatcher] Bond consistency failed: P${pMolIdx}.${pCompIdx} vs T${tMolIdx}.${tCompIdx}`);
+        console.log(`[GraphMatcher] Bond consistency failed: P${pMolIdx}.${pCompIdx} vs T${tMolIdx}.${tCompIdx}`);
       }
       return false;
     }
@@ -821,7 +910,6 @@ class VF2State {
     if (!patternComp.state || patternComp.state === '?') {
       return true;
     }
-
     return targetComp.state === patternComp.state;
   }
 
@@ -846,6 +934,7 @@ class VF2State {
     const targetBound = this.targetHasBond(tMolIdx, tCompIdx);
 
     if (pComp.wildcard === '+') {
+      if (!targetBound && shouldLogGraphMatcher) console.log(`[GraphMatcher] Wildcard + failed: P${pMolIdx}.${pCompIdx}(${pComp.name}) expects bound`);
       return targetBound;
     }
 
@@ -854,13 +943,16 @@ class VF2State {
     }
 
     if (pComp.wildcard === '-') {
+      if (targetBound && shouldLogGraphMatcher) console.log(`[GraphMatcher] Wildcard - failed: P${pMolIdx}.${pCompIdx}(${pComp.name}) expects unbound`);
       return !targetBound;
     }
 
     if (hasSpecificBond) {
+      if (!targetBound && shouldLogGraphMatcher) console.log(`[GraphMatcher] Specific bond failed: P${pMolIdx}.${pCompIdx}(${pComp.name}) expects bond`);
       return targetBound;
     }
 
+    if (targetBound && shouldLogGraphMatcher) console.log(`[GraphMatcher] Implicit unbound failed: P${pMolIdx}.${pCompIdx}(${pComp.name}) expects unbound`);
     return !targetBound;
   }
 

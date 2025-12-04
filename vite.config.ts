@@ -11,7 +11,7 @@ export default defineConfig(() => {
         port: 3000,
         host: '0.0.0.0',
       },
-      base: '/bnglplayground/',
+      base: '/bngplayground/',
       plugins: [react()],
       optimizeDeps: {
         include: [

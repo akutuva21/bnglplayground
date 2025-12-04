@@ -2,7 +2,7 @@ import type { ReactionRule } from '../../types';
 import {
   extractBonds,
   parseSpeciesGraphs,
-  snapshotComponentStates,
+  detectStateChanges as detectStateChangesUtil,
 } from '../visualization/speciesGraphUtils';
 import type { BondInfo } from '../visualization/speciesGraphUtils';
 import {
@@ -94,29 +94,16 @@ const buildStateChanges = (
   productGraphs: ReturnType<typeof parseSpeciesGraphs>,
   reversibility: Reversibility
 ): StateChange[] => {
-  const reactantStates = snapshotComponentStates(reactantGraphs);
-  const productStates = snapshotComponentStates(productGraphs);
-  const changes: StateChange[] = [];
-
-  productStates.forEach((productState, key) => {
-    const reactantState = reactantStates.get(key);
-    const fromState = reactantState?.state ?? 'unspecified';
-    const toState = productState.state ?? 'unspecified';
-    if (fromState !== toState) {
-      const [molecule, site] = key.split(':');
-      if (molecule && site) {
-        changes.push({
-          molecule,
-          site,
-          fromState,
-          toState,
-          reversibility,
-        });
-      }
-    }
-  });
-
-  return changes;
+  // Use the new positional state change detection
+  const detectedChanges = detectStateChangesUtil(reactantGraphs, productGraphs);
+  
+  return detectedChanges.map((change) => ({
+    molecule: change.molecule,
+    site: change.component,
+    fromState: change.fromState,
+    toState: change.toState,
+    reversibility,
+  }));
 };
 
 const detectSynthDeg = (rule: ReactionRule): SynthDegChange[] => {

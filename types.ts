@@ -72,6 +72,7 @@ export interface ReactionRule {
   reverseRate?: string;
   isBidirectional: boolean;
   constraints?: string[];
+  deleteMolecules?: boolean;
   allowsIntramolecular?: boolean;
   comment?: string;
 }
@@ -142,7 +143,7 @@ export interface NetworkGeneratorOptions {
   maxSpecies?: number;
   maxReactions?: number;
   maxAgg?: number;
-  maxStoich?: number;
+  maxStoich?: number | Record<string, number>;
   checkInterval?: number;
   memoryLimit?: number;
   timeLimit?: number;

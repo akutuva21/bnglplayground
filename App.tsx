@@ -23,6 +23,7 @@ function App() {
 
   const [isSimulating, setIsSimulating] = useState(false);
   const [generationProgress, setGenerationProgress] = useState<string>('');
+  const [progressStats, setProgressStats] = useState<{ species: number; reactions: number; iteration: number }>({ species: 0, reactions: 0, iteration: 0 });
   const [isAboutModalOpen, setIsAboutModalOpen] = useState(false);
   const [aboutFocus, setAboutFocus] = useState<string | null>(null);
   const [isVizModalOpen, setIsVizModalOpen] = useState(false);
@@ -32,6 +33,7 @@ function App() {
   const [tutorialProgress, setTutorialProgress] = useState<Record<string, TutorialProgressState>>({});
   const [validationWarnings, setValidationWarnings] = useState<ValidationWarning[]>([]);
   const [editorMarkers, setEditorMarkers] = useState<EditorMarker[]>([]);
+  const [loadedModelName, setLoadedModelName] = useState<string | null>(null);
 
   const [editorSelection, setEditorSelection] = useState<{ startLineNumber: number; endLineNumber: number } | undefined>(undefined);
 
@@ -179,17 +181,16 @@ function App() {
             Simulation ({options.method}) completed.&nbsp;
             Explore: <button className="underline" onClick={() => setActiveVizTab(0)}>Time Courses</button>,{' '}
             <button className="underline" onClick={() => setActiveVizTab(1)}>Regulatory</button>,{' '}
-            <button className="underline" onClick={() => setActiveVizTab(3)}>FIM</button>,{' '}
-            <button className="underline" onClick={() => setActiveVizTab(4)}>Steady State</button>
+            <button className="underline" onClick={() => setActiveVizTab(4)}>FIM</button>,{' '}
+            <button className="underline" onClick={() => setActiveVizTab(5)}>Steady State</button>
           </span>
         )
       });
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') {
-        if (error.message.includes('cancelled by user')) {
-          setStatus({ type: 'info', message: 'Simulation cancelled.' });
-          setResults(null);
-        }
+        // User cancelled - status already set by handleCancelSimulation
+        // Just ensure results are cleared
+        setResults(null);
         return;
       }
       setResults(null);
@@ -208,6 +209,11 @@ function App() {
       simulateAbortRef.current.abort('Simulation cancelled by user.');
       simulateAbortRef.current = null;
     }
+    // Force reset state immediately when user cancels
+    setIsSimulating(false);
+    setGenerationProgress('');
+    setProgressStats({ species: 0, reactions: 0, iteration: 0 });
+    setStatus({ type: 'info', message: 'Simulation cancelled.' });
   }, []);
 
   const ensureTutorialEntry = useCallback((tutorialId: string, prev: Record<string, TutorialProgressState>): TutorialProgressState => {
@@ -273,10 +279,20 @@ function App() {
 
   // Subscribe to worker progress/warning notifications while simulating
   useEffect(() => {
-    if (!isSimulating) return undefined;
+    if (!isSimulating) {
+      // Reset progress stats when not simulating
+      setProgressStats({ species: 0, reactions: 0, iteration: 0 });
+      setGenerationProgress('');
+      return undefined;
+    }
     const onProgress = (payload: any) => {
       if (!payload) return;
-      const msg = payload.message ?? `Generated ${payload.speciesCount ?? 0} species, ${payload.reactionCount ?? 0} reactions`;
+      // Update progress stats from generate_network_progress payload
+      const speciesCount = payload.species ?? payload.speciesCount ?? 0;
+      const reactionCount = payload.reactions ?? payload.reactionCount ?? 0;
+      const iteration = payload.iteration ?? 0;
+      setProgressStats({ species: speciesCount, reactions: reactionCount, iteration });
+      const msg = payload.message ?? `Generated ${speciesCount} species, ${reactionCount} reactions`;
       setGenerationProgress(String(msg));
     };
     const onWarning = (payload: any) => {
@@ -289,7 +305,6 @@ function App() {
     return () => {
       unsubP();
       unsubW();
-      setGenerationProgress('');
     };
   }, [isSimulating]);
 
@@ -362,6 +377,8 @@ function App() {
                 modelExists={!!model}
                 validationWarnings={validationWarnings}
                 editorMarkers={editorMarkers}
+                loadedModelName={loadedModelName}
+                onModelNameChange={setLoadedModelName}
                 selection={editorSelection}
               />
             </div>
@@ -382,6 +399,11 @@ function App() {
             isGenerating={isSimulating}
             progressMessage={generationProgress}
             onCancel={handleCancelSimulation}
+            speciesCount={progressStats.species}
+            reactionCount={progressStats.reactions}
+            iteration={progressStats.iteration}
+            maxSpecies={10000}
+            maxReactions={100000}
           />
           <TutorialModal
             isOpen={isTutorialModalOpen}
