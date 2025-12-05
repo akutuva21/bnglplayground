@@ -21,13 +21,17 @@ export class Component {
   /**
    * BioNetGen: Component::toString()
    * Format: name~state!bond or name!bond or name~state
+   * For multi-site bonding: name~state!0!1 (multiple bond labels)
    */
   toString(): string {
     let str = this.name;
     if (this.state) str += `~${this.state}`;
     if (this.edges.size > 0) {
-      const bondLabel = Array.from(this.edges.keys())[0];
-      str += `!${bondLabel}`;
+      // Output all bond labels for multi-site bonding
+      const bondLabels = Array.from(this.edges.keys()).sort((a, b) => a - b);
+      for (const bondLabel of bondLabels) {
+        str += `!${bondLabel}`;
+      }
     } else if (this.wildcard) {
       str += `!${this.wildcard}`;
     }

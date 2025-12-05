@@ -179,6 +179,10 @@ const splitProductsAndRates = (segment: string, parameters: Record<string, numbe
     const isKeyword = /^(exclude_reactants|include_reactants|DeleteMolecules|MoveMolecules)/.test(cleaned);
     const isMolecule = looksLikeMolecule(cleaned);
     
+    // Check for comma-separated rate pair like "kp2,km2" (bidirectional rule rates)
+    const isCommaSeparatedRates = /^[A-Za-z_][A-Za-z0-9_]*,[A-Za-z_][A-Za-z0-9_]*$/.test(cleaned) ||
+      /^[0-9.eE+-]+,[0-9.eE+-]+$/.test(cleaned);  // Also handle numeric pairs
+    
     // Math expressions contain operators outside of parentheses (*, /, -, and + in math context)
     const hasMathOutsideParens = (() => {
       let d = 0;
@@ -196,7 +200,7 @@ const splitProductsAndRates = (segment: string, parameters: Record<string, numbe
       break;
     }
 
-    if (isNumber || isParam || isKeyword || hasMathOutsideParens) {
+    if (isNumber || isParam || isKeyword || hasMathOutsideParens || isCommaSeparatedRates) {
       splitIndex = i;
     } else if (cleaned.match(/^[A-Za-z_][A-Za-z0-9_]*$/) && !isParam) {
       // Unknown identifier - could be an observable or undefined param

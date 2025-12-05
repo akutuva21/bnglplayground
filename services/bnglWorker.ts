@@ -330,8 +330,19 @@ async function generateExpandedNetwork(jobId: number, inputModel: BNGLModel): Pr
     }
   });
 
-  // INCREASED LIMITS for complex models
-  const generator = new NetworkGenerator({ maxSpecies: 20000, maxIterations: 5000 });
+  // Use network options from BNGL file if available, with reasonable defaults
+  const networkOpts = inputModel.networkOptions || {};
+  // Convert Record<string, number> to Map for maxStoich if provided
+  const maxStoich = networkOpts.maxStoich 
+    ? new Map(Object.entries(networkOpts.maxStoich))
+    : 500;  // Default limit per molecule type
+  
+  const generator = new NetworkGenerator({ 
+    maxSpecies: 20000, 
+    maxIterations: networkOpts.maxIter ?? 5000,
+    maxAgg: networkOpts.maxAgg ?? 500,
+    maxStoich 
+  });
   const result = await generator.generate(seedSpecies, rules);
 
   console.log('[Worker] Network generation complete. Generated', result.species.length, 'species and', result.reactions.length, 'reactions');

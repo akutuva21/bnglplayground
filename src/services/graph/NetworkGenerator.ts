@@ -4,15 +4,62 @@ import { Species } from './core/Species';
 import { RxnRule } from './core/RxnRule';
 import { Rxn } from './core/Rxn';
 import { GraphCanonicalizer } from './core/Canonical';
-import { GraphMatcher, MatchMap } from './core/Matcher';
+import { GraphMatcher, MatchMap, clearMatchCache } from './core/Matcher';
 import { countEmbeddingDegeneracy } from './core/degeneracy';
 import { Molecule } from './core/Molecule';
 import { Component } from './core/Component';
+
+// Performance profiling - can be enabled dynamically
+let profilingEnabled = false;
+
+export function enableProfiling() {
+  profilingEnabled = true;
+}
+
+export function disableProfiling() {
+  profilingEnabled = false;
+}
+
+// Profiling counters
+export const PROFILE_DATA = {
+  canonicalize: 0,
+  canonicalizeCount: 0,
+  findAllMaps: 0,
+  findAllMapsCount: 0,
+  applyTransformation: 0,
+  applyTransformationCount: 0,
+  isDuplicateReaction: 0,
+  isDuplicateReactionCount: 0,
+  degeneracy: 0,
+  degeneracyCount: 0,
+};
+
+export function resetProfileData() {
+  for (const key of Object.keys(PROFILE_DATA) as Array<keyof typeof PROFILE_DATA>) {
+    PROFILE_DATA[key] = 0;
+  }
+}
+
+export function printProfileData() {
+  console.log('\n=== NetworkGenerator Profile ===');
+  console.log(`  canonicalize: ${(PROFILE_DATA.canonicalize / 1000).toFixed(3)}s (${PROFILE_DATA.canonicalizeCount} calls)`);
+  console.log(`  findAllMaps: ${(PROFILE_DATA.findAllMaps / 1000).toFixed(3)}s (${PROFILE_DATA.findAllMapsCount} calls)`);
+  console.log(`  applyTransformation: ${(PROFILE_DATA.applyTransformation / 1000).toFixed(3)}s (${PROFILE_DATA.applyTransformationCount} calls)`);
+  console.log(`  isDuplicateReaction: ${(PROFILE_DATA.isDuplicateReaction / 1000).toFixed(3)}s (${PROFILE_DATA.isDuplicateReactionCount} calls)`);
+  console.log(`  degeneracy: ${(PROFILE_DATA.degeneracy / 1000).toFixed(3)}s (${PROFILE_DATA.degeneracyCount} calls)`);
+  console.log('================================\n');
+}
 
 const shouldLogNetworkGenerator =
   typeof process !== 'undefined' &&
   typeof process.env !== 'undefined' &&
   process.env.DEBUG_NETWORK_GENERATOR === 'true';
+
+// Progress logging (like BNG2.pl's output)
+const shouldLogProgress =
+  typeof process !== 'undefined' &&
+  typeof process.env !== 'undefined' &&
+  (process.env.DEBUG_NETWORK_PROGRESS === 'true' || process.env.DEBUG_NETWORK_GENERATOR === 'true');
 
 const debugNetworkLog = (...args: unknown[]) => {
   if (shouldLogNetworkGenerator) {
@@ -20,12 +67,66 @@ const debugNetworkLog = (...args: unknown[]) => {
   }
 };
 
+const progressLog = (...args: unknown[]) => {
+  if (shouldLogProgress) {
+    console.log(...args);
+  }
+};
+
+// Profiled wrapper for canonicalize
+function profiledCanonicalize(graph: SpeciesGraph): string {
+  if (profilingEnabled) {
+    const start = performance.now();
+    const result = GraphCanonicalizer.canonicalize(graph);
+    PROFILE_DATA.canonicalize += performance.now() - start;
+    PROFILE_DATA.canonicalizeCount++;
+    return result;
+  }
+  return GraphCanonicalizer.canonicalize(graph);
+}
+
+// Profiled wrapper for findAllMaps
+function profiledFindAllMaps(pattern: SpeciesGraph, target: SpeciesGraph): MatchMap[] {
+  if (profilingEnabled) {
+    const start = performance.now();
+    const result = GraphMatcher.findAllMaps(pattern, target);
+    PROFILE_DATA.findAllMaps += performance.now() - start;
+    PROFILE_DATA.findAllMapsCount++;
+    return result;
+  }
+  return GraphMatcher.findAllMaps(pattern, target);
+}
+
+// Profiled wrapper for degeneracy
+function profiledDegeneracy(pattern: SpeciesGraph, target: SpeciesGraph, match: MatchMap): number {
+  if (profilingEnabled) {
+    const start = performance.now();
+    const result = countEmbeddingDegeneracy(pattern, target, match);
+    PROFILE_DATA.degeneracy += performance.now() - start;
+    PROFILE_DATA.degeneracyCount++;
+    return result;
+  }
+  return countEmbeddingDegeneracy(pattern, target, match);
+}
+
+// Profiled wrapper for addOrGetSpecies
+let addOrGetSpeciesTime = 0;
+let addOrGetSpeciesCount = 0;
+
+/**
+ * Generate a reaction key for fast duplicate detection.
+ * Uses sorted reactant and product indices for canonical comparison.
+ */
+function getReactionKey(reactants: number[], products: number[]): string {
+  return `${reactants.slice().sort().join(',')}:${products.slice().sort().join(',')}`;
+}
+
 export interface GeneratorOptions {
   maxSpecies: number;
   maxReactions: number;
   maxIterations: number;
   maxAgg: number;
-  maxStoich: number;
+  maxStoich: number | Map<string, number>;  // Can be a single number or per-molecule-type limits
   checkInterval: number;
   memoryLimit: number;
 }
@@ -77,12 +178,14 @@ export class NetworkGenerator {
     this.speciesLimitWarnings = 0;
     this.currentRuleName = null;
 
-    // Reset inverted index
+    // Reset inverted index and caches
     this.speciesByMoleculeIndex.clear();
+    clearMatchCache();
 
     const speciesMap = new Map<string, Species>();
     const speciesList: Species[] = [];
     const reactionsList: Rxn[] = [];
+    const reactionKeys = new Set<string>();  // Fast duplicate detection for reactions
     const queue: SpeciesGraph[] = [];
     const processedPairs = new Set<string>();  // Track processed (species, rule) pairs
     const ruleProcessedSpecies = new Map<number, Set<string>>(); // Track species processed per rule (by rule index) to prevent runaway generation
@@ -94,7 +197,7 @@ export class NetworkGenerator {
 
     // Initialize with seed species
     for (const sg of seedSpecies) {
-      const canonical = GraphCanonicalizer.canonicalize(sg);
+      const canonical = profiledCanonicalize(sg);
       if (!speciesMap.has(canonical)) {
         const species = new Species(sg, speciesList.length);
         speciesMap.set(canonical, species);
@@ -114,7 +217,7 @@ export class NetworkGenerator {
         
         // Add each product species if not already present
         for (const productGraph of rule.products) {
-          const productCanonical = GraphCanonicalizer.canonicalize(productGraph);
+          const productCanonical = profiledCanonicalize(productGraph);
           if (!speciesMap.has(productCanonical)) {
             const productSpecies = new Species(productGraph, speciesList.length);
             speciesMap.set(productCanonical, productSpecies);
@@ -126,7 +229,7 @@ export class NetworkGenerator {
         
         // Create the synthesis reaction (no reactants -> products)
         const productIndices = rule.products.map(pg => {
-          const canonical = GraphCanonicalizer.canonicalize(pg);
+          const canonical = profiledCanonicalize(pg);
           return speciesMap.get(canonical)!.index;
         });
         
@@ -138,6 +241,12 @@ export class NetworkGenerator {
     }
 
     let iteration = 0;
+    let lastLoggedSpeciesCount = speciesList.length;
+    const logInterval = 50; // Log every 50 new species
+    let lastProgressCallback = Date.now();
+    const progressCallbackInterval = 2000; // Call progress callback at least every 2 seconds
+
+    progressLog(`[NetworkGenerator] Starting with ${speciesList.length} seed species, ${rules.length} rules`);
 
     try {
     while (queue.length > 0 && iteration < this.options.maxIterations) {
@@ -147,8 +256,15 @@ export class NetworkGenerator {
       await this.checkResourceLimits(signal);
       iteration++;
 
+      // Progress logging like BNG2.pl
+      if (speciesList.length >= lastLoggedSpeciesCount + logInterval) {
+        const elapsed = ((Date.now() - this.startTime) / 1000).toFixed(1);
+        progressLog(`[NetworkGenerator] Iter ${iteration}: ${speciesList.length} species, ${reactionsList.length} reactions, queue=${queue.length} (${elapsed}s)`);
+        lastLoggedSpeciesCount = speciesList.length;
+      }
+
       const currentSpecies = queue.shift()!;
-      const currentCanonical = GraphCanonicalizer.canonicalize(currentSpecies);
+      const currentCanonical = profiledCanonicalize(currentSpecies);
       const currentSpeciesObj = speciesMap.get(currentCanonical)!;
 
       if (shouldLogNetworkGenerator) {
@@ -218,6 +334,7 @@ export class NetworkGenerator {
             speciesList,
             queue,
             reactionsList,
+            reactionKeys,
             signal
           );
         } else if (rule.reactants.length > 1) {
@@ -235,6 +352,7 @@ export class NetworkGenerator {
             speciesList,
             queue,
             reactionsList,
+            reactionKeys,
             processedPairs,
             signal
           );
@@ -249,7 +367,10 @@ export class NetworkGenerator {
 
     this.currentRuleName = null;
 
-    if (onProgress && iteration % 10 === 0) {
+    // Call progress callback every 10 iterations OR every 2 seconds
+    const now = Date.now();
+    if (onProgress && (iteration % 10 === 0 || now - lastProgressCallback >= progressCallbackInterval)) {
+        lastProgressCallback = now;
         onProgress({
           species: speciesList.length,
           reactions: reactionsList.length,
@@ -269,6 +390,9 @@ export class NetworkGenerator {
       }
     }
 
+    const totalTime = ((Date.now() - this.startTime) / 1000).toFixed(2);
+    progressLog(`[NetworkGenerator] Complete: ${speciesList.length} species, ${reactionsList.length} reactions in ${totalTime}s (${iteration} iterations)`);
+
     return { species: speciesList, reactions: reactionsList };
   }
 
@@ -282,6 +406,7 @@ export class NetworkGenerator {
     speciesList: Species[],
     queue: SpeciesGraph[],
     reactionsList: Rxn[],
+    reactionKeys: Set<string>,
     signal?: AbortSignal
   ): Promise<void> {
     const pattern = rule.reactants[0];
@@ -290,14 +415,22 @@ export class NetworkGenerator {
       reactantSpecies.graph.buildAdjacencyBitset();
     }
 
-    const matches = GraphMatcher.findAllMaps(pattern, reactantSpecies.graph);
+    const matches = profiledFindAllMaps(pattern, reactantSpecies.graph);
+
+    // Debug: log match count for phosphorylation rule
+    if (shouldLogNetworkGenerator && rule.name?.includes('s45~U') && rule.name?.includes('CK1a')) {
+      debugNetworkLog(`[applyUnimolecularRule] Rule ${rule.name}: found ${matches.length} matches in species ${reactantSpecies.graph.toString()}`);
+      if (matches.length > 0) {
+        debugNetworkLog(`[applyUnimolecularRule] First match: moleculeMap=${JSON.stringify(Array.from(matches[0].moleculeMap.entries()))}`);
+      }
+    }
 
     for (const match of matches) {
       if (signal?.aborted) {
         throw new DOMException('Network generation cancelled', 'AbortError');
       }
 
-      const degeneracy = countEmbeddingDegeneracy(pattern, reactantSpecies.graph, match);
+      const degeneracy = profiledDegeneracy(pattern, reactantSpecies.graph, match);
 
       // Apply transformation
       const products = this.applyRuleTransformation(
@@ -306,6 +439,11 @@ export class NetworkGenerator {
         [reactantSpecies.graph],
         [match]
       );
+      
+      // Debug: log transformation result for phosphorylation rule
+      if (shouldLogNetworkGenerator && rule.name?.includes('s45~U') && rule.name?.includes('CK1a')) {
+        debugNetworkLog(`[applyUnimolecularRule] Transformation result: ${products ? products.map(p => p.toString()).join(', ') : 'null'}`);
+      }
       
       // products === null means transformation failed (e.g., no match)
       // products === [] (empty array) is valid for degradation rules
@@ -328,7 +466,10 @@ export class NetworkGenerator {
         { degeneracy }
       );
 
-      if (!this.isDuplicateReaction(rxn, reactionsList)) {
+      // Fast O(1) duplicate detection using Set
+      const rxnKey = getReactionKey(rxn.reactants, rxn.products);
+      if (!reactionKeys.has(rxnKey)) {
+        reactionKeys.add(rxnKey);
         reactionsList.push(rxn);
       }
     }
@@ -346,6 +487,7 @@ export class NetworkGenerator {
     speciesList: Species[],
     queue: SpeciesGraph[],
     reactionsList: Rxn[],
+    reactionKeys: Set<string>,
     processedPairs: Set<string>,
     signal?: AbortSignal
   ): Promise<void> {
@@ -392,15 +534,18 @@ export class NetworkGenerator {
         if (current === molB) return true;
         
         // Find connected molecules
-        for (const [key, partnerKey] of graph.adjacency.entries()) {
+        for (const [key, partnerKeys] of graph.adjacency.entries()) {
           const [molStr] = key.split('.');
-          const [partnerMolStr] = partnerKey.split('.');
           const keyMolIdx = Number(molStr);
-          const partnerMolIdx = Number(partnerMolStr);
           
-          if (keyMolIdx === current && !visited.has(partnerMolIdx)) {
-            visited.add(partnerMolIdx);
-            queue.push(partnerMolIdx);
+          for (const partnerKey of partnerKeys) {
+            const [partnerMolStr] = partnerKey.split('.');
+            const partnerMolIdx = Number(partnerMolStr);
+            
+            if (keyMolIdx === current && !visited.has(partnerMolIdx)) {
+              visited.add(partnerMolIdx);
+              queue.push(partnerMolIdx);
+            }
           }
         }
       }
@@ -417,7 +562,7 @@ export class NetworkGenerator {
       if (cached !== undefined) {
         return cached;
       }
-      const computed = countEmbeddingDegeneracy(patternGraph, speciesGraph, match);
+      const computed = profiledDegeneracy(patternGraph, speciesGraph, match);
       cache.set(match, computed);
       return computed;
     };
@@ -427,7 +572,7 @@ export class NetworkGenerator {
       const secondIdx = firstIdx === 0 ? 1 : 0;
       const secondPattern = secondIdx === 0 ? pattern1 : pattern2;
 
-      const matchesFirst = GraphMatcher.findAllMaps(firstPattern, reactant1Species.graph);
+      const matchesFirst = profiledFindAllMaps(firstPattern, reactant1Species.graph);
       if (matchesFirst.length === 0) {
         continue;
       }
@@ -471,7 +616,7 @@ export class NetworkGenerator {
           reactant2Species.graph.buildAdjacencyBitset();
         }
 
-        const matchesSecond = GraphMatcher.findAllMaps(secondPattern, reactant2Species.graph);
+        const matchesSecond = profiledFindAllMaps(secondPattern, reactant2Species.graph);
         if (matchesSecond.length === 0) {
           continue;
         }
@@ -556,7 +701,10 @@ export class NetworkGenerator {
               }
             );
 
-            if (!this.isDuplicateReaction(rxn, reactionsList)) {
+            // Fast O(1) duplicate detection using Set
+            const rxnKey = getReactionKey(rxn.reactants, rxn.products);
+            if (!reactionKeys.has(rxnKey)) {
+              reactionKeys.add(rxnKey);
               reactionsList.push(rxn);
               producedReaction = true;
             }
@@ -728,12 +876,120 @@ export class NetworkGenerator {
     
     // Determine which molecules to include based on the PRODUCT PATTERN
     // For each product pattern molecule, include the corresponding reactant molecule
-    // PLUS any molecules connected via wildcards (!+) in the product pattern
+    // PLUS any molecules connected via PRESERVED bonds (wildcards !+ or same bond labels)
+    //
+    // IMPORTANT: A bond is BROKEN if:
+    // - It exists in the reactant pattern (numbered label !n)
+    // - It does NOT exist in the product pattern (unbound or different label)
+    // 
+    // Broken bonds should NOT be traversed when finding connected components.
     const includedMols = new Set<string>(); // "reactantIdx:molIdx"
     
-    // Start with directly mapped molecules AND their entire connected components
-    // BioNetGen semantics: When a molecule is matched, ALL other molecules in its complex
-    // should be preserved in the product (unless the rule explicitly breaks those bonds).
+    // Build a set of bonds that are BROKEN by this transformation
+    // A broken bond is one that exists in reactant patterns but not in product pattern
+    const brokenBonds = new Set<string>(); // "reactantIdx:molIdx.compIdx"
+    
+    // First, collect all bonds from reactant patterns with their labels
+    const reactantPatternBonds = new Map<number, Map<string, number>>(); // bondLabel -> {pMolIdx, pCompIdx}
+    for (let r = 0; r < reactantPatterns.length; r++) {
+      const rp = reactantPatterns[r];
+      const match = matches[r];
+      if (!match) continue;
+      
+      for (let pMolIdx = 0; pMolIdx < rp.molecules.length; pMolIdx++) {
+        const pMol = rp.molecules[pMolIdx];
+        const targetMolIdx = match.moleculeMap.get(pMolIdx);
+        if (targetMolIdx === undefined) continue;
+        
+        for (let pCompIdx = 0; pCompIdx < pMol.components.length; pCompIdx++) {
+          const pComp = pMol.components[pCompIdx];
+          // Check if this component has a numbered bond (!n)
+          for (const [bondLabel] of pComp.edges) {
+            if (typeof bondLabel === 'number') {
+              // Find the corresponding target component via componentMap
+              const componentKey = `${pMolIdx}.${pCompIdx}`;
+              const targetCompKey = match.componentMap.get(componentKey);
+              if (targetCompKey) {
+                // Store this as a reactant pattern bond
+                if (!reactantPatternBonds.has(bondLabel)) {
+                  reactantPatternBonds.set(bondLabel, new Map());
+                }
+                reactantPatternBonds.get(bondLabel)!.set(`${r}:${targetCompKey}`, bondLabel);
+              }
+            }
+          }
+        }
+      }
+    }
+    
+    // Now check which reactant pattern bonds are NOT present in the product pattern
+    // A bond is preserved if:
+    // - Product pattern has a component with wildcard !+ at the same site, OR
+    // - Product pattern has a component with the same numbered bond label
+    for (let pMolIdx = 0; pMolIdx < pattern.molecules.length; pMolIdx++) {
+      const pMol = pattern.molecules[pMolIdx];
+      const mapping = productPatternToReactant.get(pMolIdx);
+      if (!mapping) continue;
+      
+      const match = matches[mapping.reactantIdx];
+      if (!match) continue;
+      
+      // Find which reactant pattern molecule this product pattern molecule came from
+      const reactantPattern = reactantPatterns[mapping.reactantIdx];
+      let reactantPatternMolIdx = -1;
+      for (const [rpMol, tMol] of match.moleculeMap.entries()) {
+        if (tMol === mapping.targetMolIdx) {
+          reactantPatternMolIdx = rpMol;
+          break;
+        }
+      }
+      if (reactantPatternMolIdx === -1) continue;
+      
+      const reactantPatternMol = reactantPattern.molecules[reactantPatternMolIdx];
+      
+      // For each component in the reactant pattern that has a bond...
+      for (let rpCompIdx = 0; rpCompIdx < reactantPatternMol.components.length; rpCompIdx++) {
+        const rpComp = reactantPatternMol.components[rpCompIdx];
+        
+        for (const [bondLabel] of rpComp.edges) {
+          if (typeof bondLabel !== 'number') continue;
+          
+          // Find corresponding product pattern component
+          const matchingPpComp = pMol.components.find(c => c.name === rpComp.name);
+          
+          // Check if bond is preserved in product pattern
+          let bondPreserved = false;
+          if (matchingPpComp) {
+            // Check for wildcard
+            if (matchingPpComp.wildcard === '+' || matchingPpComp.wildcard === '?') {
+              bondPreserved = true;
+            }
+            // Check for same bond label
+            for (const [ppBondLabel] of matchingPpComp.edges) {
+              if (ppBondLabel === bondLabel) {
+                bondPreserved = true;
+                break;
+              }
+            }
+          }
+          
+          if (!bondPreserved) {
+            // This bond is broken - mark the target component
+            const componentKey = `${reactantPatternMolIdx}.${rpCompIdx}`;
+            const targetCompKey = match.componentMap.get(componentKey);
+            if (targetCompKey) {
+              brokenBonds.add(`${mapping.reactantIdx}:${targetCompKey}`);
+              if (shouldLogNetworkGenerator) {
+                debugNetworkLog(`[buildProductGraph] Bond label ${bondLabel} is BROKEN at ${mapping.reactantIdx}:${targetCompKey}`);
+              }
+            }
+          }
+        }
+      }
+    }
+    
+    // Start with directly mapped molecules and traverse connections,
+    // but SKIP broken bonds when finding connected molecules.
     for (const [, mapping] of productPatternToReactant.entries()) {
       const reactantGraph = reactantGraphs[mapping.reactantIdx];
       const startMolIdx = mapping.targetMolIdx;
@@ -741,7 +997,7 @@ export class NetworkGenerator {
       // Include the matched molecule
       includedMols.add(`${mapping.reactantIdx}:${startMolIdx}`);
       
-      // Include all molecules in the same connected component
+      // Traverse connected component, but skip broken bonds
       const visited = new Set<number>([startMolIdx]);
       const queue = [startMolIdx];
       
@@ -749,16 +1005,29 @@ export class NetworkGenerator {
         const molIdx = queue.shift()!;
         
         // Find all molecules bonded to this one
-        for (const [key, partnerKey] of reactantGraph.adjacency.entries()) {
-          const [molStr] = key.split('.');
-          const [partnerMolStr] = partnerKey.split('.');
+        for (const [key, partnerKeys] of reactantGraph.adjacency.entries()) {
+          const [molStr, compStr] = key.split('.');
           const keyMolIdx = Number(molStr);
-          const partnerMolIdx = Number(partnerMolStr);
           
-          if (keyMolIdx === molIdx && !visited.has(partnerMolIdx)) {
-            visited.add(partnerMolIdx);
-            includedMols.add(`${mapping.reactantIdx}:${partnerMolIdx}`);
-            queue.push(partnerMolIdx);
+          for (const partnerKey of partnerKeys) {
+            const [partnerMolStr] = partnerKey.split('.');
+            const partnerMolIdx = Number(partnerMolStr);
+            
+            if (keyMolIdx === molIdx && !visited.has(partnerMolIdx)) {
+              // Check if this bond is broken
+              const bondKey = `${mapping.reactantIdx}:${molStr}.${compStr}`;
+              if (brokenBonds.has(bondKey)) {
+                // Skip this bond - it's being broken by the rule
+                if (shouldLogNetworkGenerator) {
+                  debugNetworkLog(`[buildProductGraph] Skipping broken bond at ${bondKey}`);
+                }
+                continue;
+              }
+              
+              visited.add(partnerMolIdx);
+              includedMols.add(`${mapping.reactantIdx}:${partnerMolIdx}`);
+              queue.push(partnerMolIdx);
+            }
           }
         }
       }
@@ -829,33 +1098,41 @@ export class NetworkGenerator {
         const [, reactantCompStr] = reactantGraphCompKey.split('.');
         const reactantCompIdx = Number(reactantCompStr);
         
-        // Find what this component is bonded to
-        const bondTarget = reactantGraph.adjacency.get(`${mapping.targetMolIdx}.${reactantCompIdx}`);
-        if (bondTarget) {
-          const [partnerMolStr] = bondTarget.split('.');
-          const partnerMolIdx = Number(partnerMolStr);
-          includedMols.add(`${mapping.reactantIdx}:${partnerMolIdx}`);
-          
-          if (shouldLogNetworkGenerator) {
-            debugNetworkLog(`[buildProductGraph] !+ wildcard at pattern comp ${pMolIdx}.${pCompIdx} -> reactant comp ${mapping.targetMolIdx}.${reactantCompIdx} -> bonded to mol ${partnerMolIdx}`);
-          }
-          
-          // Recursively include the entire connected component from partner
-          // (excluding the original molecule we started from)
-          const toProcess = [partnerMolIdx];
-          const visited = new Set<number>([partnerMolIdx, mapping.targetMolIdx]);
-          while (toProcess.length > 0) {
-            const molIdx = toProcess.pop()!;
-            for (const [key, partnerKey] of reactantGraph.adjacency.entries()) {
-              const [molStr] = key.split('.');
-              const [partnerMolStr2] = partnerKey.split('.');
-              const keyMolIdx = Number(molStr);
-              const partnerMolIdx2 = Number(partnerMolStr2);
-              
-              if (keyMolIdx === molIdx && !visited.has(partnerMolIdx2)) {
-                visited.add(partnerMolIdx2);
-                includedMols.add(`${mapping.reactantIdx}:${partnerMolIdx2}`);
-                toProcess.push(partnerMolIdx2);
+        // Find what this component is bonded to (support multi-site bonding)
+        const bondTargets = reactantGraph.adjacency.get(`${mapping.targetMolIdx}.${reactantCompIdx}`);
+        if (bondTargets && bondTargets.length > 0) {
+          for (const bondTarget of bondTargets) {
+            const [partnerMolStr] = bondTarget.split('.');
+            const partnerMolIdx = Number(partnerMolStr);
+            includedMols.add(`${mapping.reactantIdx}:${partnerMolIdx}`);
+            
+            if (shouldLogNetworkGenerator) {
+              debugNetworkLog(`[buildProductGraph] !+ wildcard at pattern comp ${pMolIdx}.${pCompIdx} -> reactant comp ${mapping.targetMolIdx}.${reactantCompIdx} -> bonded to mol ${partnerMolIdx}`);
+            }
+            
+            // Recursively include the entire connected component from partner
+            // (excluding the original molecule we started from)
+            const toProcess = [partnerMolIdx];
+            const visited = new Set<number>([partnerMolIdx, mapping.targetMolIdx]);
+            while (toProcess.length > 0) {
+              const molIdx = toProcess.pop()!;
+              // Iterate over adjacency entries (support multi-site bonding)
+              for (const [key, partnerKeys] of reactantGraph.adjacency.entries()) {
+                const [molStr] = key.split('.');
+                const keyMolIdx = Number(molStr);
+                
+                if (keyMolIdx === molIdx) {
+                  for (const partnerKey2 of partnerKeys) {
+                    const [partnerMolStr2] = partnerKey2.split('.');
+                    const partnerMolIdx2 = Number(partnerMolStr2);
+                    
+                    if (!visited.has(partnerMolIdx2)) {
+                      visited.add(partnerMolIdx2);
+                      includedMols.add(`${mapping.reactantIdx}:${partnerMolIdx2}`);
+                      toProcess.push(partnerMolIdx2);
+                    }
+                  }
+                }
               }
             }
           }
@@ -926,34 +1203,37 @@ export class NetworkGenerator {
     for (let r = 0; r < reactantGraphs.length; r++) {
       const reactantGraph = reactantGraphs[r];
       
-      for (const [key, partnerKey] of reactantGraph.adjacency.entries()) {
+      for (const [key, partnerKeys] of reactantGraph.adjacency.entries()) {
         const [molStr, compStr] = key.split('.');
-        const [partnerMolStr, partnerCompStr] = partnerKey.split('.');
         const molIdx = Number(molStr);
         const compIdx = Number(compStr);
-        const partnerMolIdx = Number(partnerMolStr);
-        const partnerCompIdx = Number(partnerCompStr);
         
-        // Skip if not valid
-        if (isNaN(molIdx) || isNaN(compIdx) || isNaN(partnerMolIdx) || isNaN(partnerCompIdx)) continue;
-        
-        // Check if both molecules are included
-        const mol1Key = `${r}:${molIdx}`;
-        const mol2Key = `${r}:${partnerMolIdx}`;
-        if (!includedMols.has(mol1Key) || !includedMols.has(mol2Key)) continue;
-        
-        // Avoid adding same bond twice
-        const bondKey = molIdx < partnerMolIdx || (molIdx === partnerMolIdx && compIdx < partnerCompIdx)
-          ? `${r}:${molIdx}.${compIdx}-${partnerMolIdx}.${partnerCompIdx}`
-          : `${r}:${partnerMolIdx}.${partnerCompIdx}-${molIdx}.${compIdx}`;
-        if (addedBonds.has(bondKey)) continue;
-        addedBonds.add(bondKey);
-        
-        const productMolIdx1 = reactantToProductMol.get(mol1Key);
-        const productMolIdx2 = reactantToProductMol.get(mol2Key);
-        
-        if (productMolIdx1 !== undefined && productMolIdx2 !== undefined) {
-          productGraph.addBond(productMolIdx1, compIdx, productMolIdx2, partnerCompIdx);
+        for (const partnerKey of partnerKeys) {
+          const [partnerMolStr, partnerCompStr] = partnerKey.split('.');
+          const partnerMolIdx = Number(partnerMolStr);
+          const partnerCompIdx = Number(partnerCompStr);
+          
+          // Skip if not valid
+          if (isNaN(molIdx) || isNaN(compIdx) || isNaN(partnerMolIdx) || isNaN(partnerCompIdx)) continue;
+          
+          // Check if both molecules are included
+          const mol1Key = `${r}:${molIdx}`;
+          const mol2Key = `${r}:${partnerMolIdx}`;
+          if (!includedMols.has(mol1Key) || !includedMols.has(mol2Key)) continue;
+          
+          // Avoid adding same bond twice
+          const bondKey = molIdx < partnerMolIdx || (molIdx === partnerMolIdx && compIdx < partnerCompIdx)
+            ? `${r}:${molIdx}.${compIdx}-${partnerMolIdx}.${partnerCompIdx}`
+            : `${r}:${partnerMolIdx}.${partnerCompIdx}-${molIdx}.${compIdx}`;
+          if (addedBonds.has(bondKey)) continue;
+          addedBonds.add(bondKey);
+          
+          const productMolIdx1 = reactantToProductMol.get(mol1Key);
+          const productMolIdx2 = reactantToProductMol.get(mol2Key);
+          
+          if (productMolIdx1 !== undefined && productMolIdx2 !== undefined) {
+            productGraph.addBond(productMolIdx1, compIdx, productMolIdx2, partnerCompIdx);
+          }
         }
       }
     }
@@ -1068,6 +1348,9 @@ export class NetworkGenerator {
       }
     }
 
+    // Collect all bonds to add first
+    const bondsToAdd: Array<{ molIdx1: number; compIdx1: number; molIdx2: number; compIdx2: number; bondLabel: number }> = [];
+    
     for (const [bondLabel, endpoints] of bondEndpoints.entries()) {
       if (endpoints.length !== 2) {
         if (shouldLogNetworkGenerator) {
@@ -1094,38 +1377,92 @@ export class NetworkGenerator {
         continue;
       }
 
-      // Clear any existing bonds on these components before creating new ones
-      const key1 = `${molIdx1}.${compIdx1}`;
-      const key2 = `${molIdx2}.${compIdx2}`;
-      const oldPartner1 = productGraph.adjacency.get(key1);
-      const oldPartner2 = productGraph.adjacency.get(key2);
-      
-      if (oldPartner1) {
-        productGraph.adjacency.delete(key1);
-        productGraph.adjacency.delete(oldPartner1);
-        productGraph.molecules[molIdx1].components[compIdx1].edges.clear();
-        // Also clear the partner's edges
-        const [oldPartnerMolStr, oldPartnerCompStr] = oldPartner1.split('.');
-        const oldPartnerMolIdx = Number(oldPartnerMolStr);
-        const oldPartnerCompIdx = Number(oldPartnerCompStr);
-        if (!isNaN(oldPartnerMolIdx) && !isNaN(oldPartnerCompIdx)) {
-          productGraph.molecules[oldPartnerMolIdx]?.components[oldPartnerCompIdx]?.edges.clear();
+      bondsToAdd.push({ molIdx1, compIdx1, molIdx2, compIdx2, bondLabel });
+    }
+    
+    // Track which component keys are involved in the new bonds
+    // This tells us which components are being newly bonded by this rule
+    const newBondComponents = new Set<string>();
+    for (const bond of bondsToAdd) {
+      newBondComponents.add(`${bond.molIdx1}.${bond.compIdx1}`);
+      newBondComponents.add(`${bond.molIdx2}.${bond.compIdx2}`);
+    }
+    
+    // First, clear old bonds ONLY for components that are being newly bonded
+    // but preserve bonds to other components that are also being newly bonded
+    // (for multi-site bonding support)
+    for (const key of newBondComponents) {
+      const oldPartners = productGraph.adjacency.get(key);
+      if (oldPartners && oldPartners.length > 0) {
+        // Only clear bonds to partners NOT in the new bond set
+        const partnersToRemove = oldPartners.filter(p => !newBondComponents.has(p));
+        for (const oldPartner of partnersToRemove) {
+          // Remove us from partner's list
+          const partnerPartners = productGraph.adjacency.get(oldPartner);
+          if (partnerPartners) {
+            const idx = partnerPartners.indexOf(key);
+            if (idx >= 0) {
+              partnerPartners.splice(idx, 1);
+            }
+            if (partnerPartners.length === 0) {
+              productGraph.adjacency.delete(oldPartner);
+            }
+          }
+          // Clear the partner's edges to us
+          const [oldPartnerMolStr, oldPartnerCompStr] = oldPartner.split('.');
+          const oldPartnerMolIdx = Number(oldPartnerMolStr);
+          const oldPartnerCompIdx = Number(oldPartnerCompStr);
+          const [myMolStr, myCompStr] = key.split('.');
+          const myMolIdx = Number(myMolStr);
+          const myCompIdx = Number(myCompStr);
+          if (!isNaN(oldPartnerMolIdx) && !isNaN(oldPartnerCompIdx)) {
+            const partnerComp = productGraph.molecules[oldPartnerMolIdx]?.components[oldPartnerCompIdx];
+            if (partnerComp) {
+              // Find and remove edge pointing to our component
+              for (const [edgeLabel, edgeTarget] of partnerComp.edges.entries()) {
+                if (edgeTarget === myCompIdx) {
+                  partnerComp.edges.delete(edgeLabel);
+                  break;
+                }
+              }
+            }
+          }
+        }
+        // Update our adjacency to only keep partners in the new bond set
+        const partnersToKeep = oldPartners.filter(p => newBondComponents.has(p));
+        if (partnersToKeep.length === 0) {
+          productGraph.adjacency.delete(key);
+        } else {
+          productGraph.adjacency.set(key, partnersToKeep);
+        }
+        // Clear edges that point to removed partners
+        const [myMolStr, myCompStr] = key.split('.');
+        const myMolIdx = Number(myMolStr);
+        const myCompIdx = Number(myCompStr);
+        const myComp = productGraph.molecules[myMolIdx]?.components[myCompIdx];
+        if (myComp) {
+          const edgesToRemove: number[] = [];
+          for (const [edgeLabel, edgeTarget] of myComp.edges.entries()) {
+            // Check if this edge points to a component that's not in new bonds
+            const targetKey = `${myMolIdx}.${edgeTarget}`;
+            const found = partnersToRemove.some(p => {
+              const [pMol, pComp] = p.split('.');
+              return pMol === myMolStr && pComp === String(edgeTarget);
+            });
+            if (found) {
+              edgesToRemove.push(edgeLabel);
+            }
+          }
+          for (const label of edgesToRemove) {
+            myComp.edges.delete(label);
+          }
         }
       }
-      if (oldPartner2 && oldPartner2 !== key1) {
-        productGraph.adjacency.delete(key2);
-        productGraph.adjacency.delete(oldPartner2);
-        productGraph.molecules[molIdx2].components[compIdx2].edges.clear();
-        const [oldPartnerMolStr, oldPartnerCompStr] = oldPartner2.split('.');
-        const oldPartnerMolIdx = Number(oldPartnerMolStr);
-        const oldPartnerCompIdx = Number(oldPartnerCompStr);
-        if (!isNaN(oldPartnerMolIdx) && !isNaN(oldPartnerCompIdx)) {
-          productGraph.molecules[oldPartnerMolIdx]?.components[oldPartnerCompIdx]?.edges.clear();
-        }
-      }
-
-      // Create the new bond
-      productGraph.addBond(molIdx1, compIdx1, molIdx2, compIdx2, bondLabel);
+    }
+    
+    // Now add all new bonds
+    for (const bond of bondsToAdd) {
+      productGraph.addBond(bond.molIdx1, bond.compIdx1, bond.molIdx2, bond.compIdx2, bond.bondLabel);
     }
 
     if (shouldLogNetworkGenerator) {
@@ -1163,7 +1500,7 @@ export class NetworkGenerator {
     queue: SpeciesGraph[],
     signal?: AbortSignal
   ): Species {
-    const canonical = GraphCanonicalizer.canonicalize(graph);
+    const canonical = profiledCanonicalize(graph);
 
     if (speciesMap.has(canonical)) {
       return speciesMap.get(canonical)!;
@@ -1221,12 +1558,12 @@ export class NetworkGenerator {
   }
 
   private async checkResourceLimits(signal?: AbortSignal): Promise<void> {
-    const now = Date.now();
-
+    // Removed yielding to event loop - it causes issues in some test runners
     if (signal?.aborted) {
       throw new Error('Network generation aborted by user');
     }
 
+    const now = Date.now();
     if (now - this.lastMemoryCheck > this.options.checkInterval) {
       this.lastMemoryCheck = now;
 
@@ -1237,8 +1574,6 @@ export class NetworkGenerator {
           `${(this.options.memoryLimit / 1e6).toFixed(0)}MB`
         );
       }
-
-      await new Promise(resolve => setTimeout(resolve, 0));
     }
   }
 
@@ -1256,11 +1591,17 @@ export class NetworkGenerator {
         typeCounts.set(mol.name, (typeCounts.get(mol.name) || 0) + 1);
       }
       for (const [typeName, count] of typeCounts.entries()) {
-        if (count > this.options.maxStoich) {
-          this.warnStoichLimit(count);
-          throw this.buildLimitError(
-            `Species exceeds max stoichiometry (${this.options.maxStoich}) for molecule type "${typeName}" under rule "${this.currentRuleName ?? 'unknown'}".`
-          );
+        // Support both single number limit and per-molecule-type Map
+        let limit: number;
+        if (typeof this.options.maxStoich === 'number') {
+          limit = this.options.maxStoich;
+        } else {
+          // Map<string, number> - use molecule-specific limit or default to Infinity
+          limit = this.options.maxStoich.get(typeName) ?? Infinity;
+        }
+        if (count > limit) {
+          // Silently reject products exceeding stoichiometry limit - this is expected behavior
+          return false;
         }
       }
 

@@ -3,12 +3,13 @@ import { Molecule } from './Molecule.ts';
 
 export class SpeciesGraph {
   molecules: Molecule[];
-  adjacency: Map<string, string>;  // "molIdx.compIdx" => "molIdx.compIdx"
+  adjacency: Map<string, string[]>;  // "molIdx.compIdx" => ["molIdx.compIdx", ...] (supports multi-site bonding)
   compartment?: string;  // species-level compartment
   adjacencyBitset?: Uint32Array;
 
   // Cached properties
   private _stringExact?: string;
+  private _canonicalString?: string;  // Cached canonical form
   private _componentOffsets?: number[];
   private _componentCount?: number;
 
@@ -23,6 +24,7 @@ export class SpeciesGraph {
   /**
    * BioNetGen: SpeciesGraph::addBond()
    * Create edge between two components
+   * Supports multi-site bonding where one component can have multiple bonds
    */
   addBond(mol1: number, comp1: number, mol2: number, comp2: number, bondLabel?: number): void {
     const compA = this.molecules[mol1].components[comp1];
@@ -32,11 +34,27 @@ export class SpeciesGraph {
     // FIX: Check if bondLabel is defined (including 0)
     const label = (bondLabel !== undefined) ? bondLabel : this.getNextBondLabel();
 
-    // Update adjacency map (both directions)
+    // Update adjacency map (both directions) - supports multi-site bonding
     const key1 = `${mol1}.${comp1}`;
     const key2 = `${mol2}.${comp2}`;
-    this.adjacency.set(key1, key2);
-    this.adjacency.set(key2, key1);
+    
+    // Add key2 to key1's partner list (avoid duplicates)
+    if (!this.adjacency.has(key1)) {
+      this.adjacency.set(key1, []);
+    }
+    const partners1 = this.adjacency.get(key1)!;
+    if (!partners1.includes(key2)) {
+      partners1.push(key2);
+    }
+    
+    // Add key1 to key2's partner list (avoid duplicates)
+    if (!this.adjacency.has(key2)) {
+      this.adjacency.set(key2, []);
+    }
+    const partners2 = this.adjacency.get(key2)!;
+    if (!partners2.includes(key1)) {
+      partners2.push(key1);
+    }
 
     // Update Component.edges for VF2 matching
     // FIX: Remove any existing "unresolved" edges that might have been set by parser
@@ -52,6 +70,7 @@ export class SpeciesGraph {
 
     // Invalidate caches
     this._stringExact = undefined;
+    this._canonicalString = undefined;
     this.adjacencyBitset = undefined;
     this._componentOffsets = undefined;
     this._componentCount = undefined;
@@ -88,10 +107,11 @@ export class SpeciesGraph {
   /**
    * BioNetGen: SpeciesGraph::deleteBond()
    * Safely removes a bond between a component and its partner.
+   * For multi-site bonding, removes all bonds from this component.
    */
   deleteBond(mol: number, comp: number): void {
     const key = `${mol}.${comp}`;
-    const partner = this.adjacency.get(key);
+    const partners = this.adjacency.get(key);
 
     // 1. Remove forward link from adjacency
     this.adjacency.delete(key);
@@ -105,22 +125,37 @@ export class SpeciesGraph {
       }
     }
 
-    // 3. Handle partner
-    if (partner) {
-      // Only delete reverse link if it actually points back to us (reciprocity check)
-      if (this.adjacency.get(partner) === key) {
-        this.adjacency.delete(partner);
-      }
+    // 3. Handle partners (all of them for multi-site bonding)
+    if (partners) {
+      for (const partner of partners) {
+        // Remove us from partner's list
+        const partnerPartners = this.adjacency.get(partner);
+        if (partnerPartners) {
+          const idx = partnerPartners.indexOf(key);
+          if (idx >= 0) {
+            partnerPartners.splice(idx, 1);
+          }
+          // If partner has no more partners, remove it from adjacency
+          if (partnerPartners.length === 0) {
+            this.adjacency.delete(partner);
+          }
+        }
 
-      // Clear partner component edges ONLY if they point to us
-      const [pMolStr, pCompStr] = partner.split('.');
-      const pMol = Number(pMolStr);
-      const pComp = Number(pCompStr);
-      const pMolecule = this.molecules[pMol];
-      if (pMolecule) {
-        const pComponent = pMolecule.components[pComp];
-        if (pComponent) {
-          pComponent.edges.clear();
+        // Clear partner component edges that point to us
+        const [pMolStr, pCompStr] = partner.split('.');
+        const pMol = Number(pMolStr);
+        const pComp = Number(pCompStr);
+        const pMolecule = this.molecules[pMol];
+        if (pMolecule) {
+          const pComponent = pMolecule.components[pComp];
+          if (pComponent) {
+            // Remove edges that point to our component
+            for (const [label, targetComp] of pComponent.edges.entries()) {
+              if (targetComp === comp) {
+                pComponent.edges.delete(label);
+              }
+            }
+          }
         }
       }
     }
@@ -142,6 +177,7 @@ export class SpeciesGraph {
     }
 
     // Rebuild adjacency for the new molecules based on the cloned components
+    // Support multi-site bonding where one component can have multiple partners
     for (let i = 0; i < other.molecules.length; i++) {
       const newMolIdx = offset + i;
       const mol = this.molecules[newMolIdx];
@@ -149,11 +185,11 @@ export class SpeciesGraph {
       for (let c = 0; c < mol.components.length; c++) {
         const comp = mol.components[c];
         const newEdges = new Map<number, number>();
-
-        for (const [label, targetCompIdx] of comp.edges.entries()) {
-          const oldKey = `${i}.${c}`;
-          const oldPartner = other.adjacency.get(oldKey);
-          if (oldPartner) {
+        const oldKey = `${i}.${c}`;
+        const oldPartners = other.adjacency.get(oldKey);
+        
+        if (oldPartners) {
+          for (const oldPartner of oldPartners) {
             const [oldPartnerMol, oldPartnerComp] = oldPartner.split('.').map(Number);
             const newPartnerMol = offset + oldPartnerMol;
             const newPartnerComp = oldPartnerComp;
@@ -161,9 +197,20 @@ export class SpeciesGraph {
             const newKey = `${newMolIdx}.${c}`;
             const newPartnerKey = `${newPartnerMol}.${newPartnerComp}`;
 
-            this.adjacency.set(newKey, newPartnerKey);
-            newEdges.set(label, targetCompIdx);
+            // Add to adjacency (supports multi-site)
+            if (!this.adjacency.has(newKey)) {
+              this.adjacency.set(newKey, []);
+            }
+            const partners = this.adjacency.get(newKey)!;
+            if (!partners.includes(newPartnerKey)) {
+              partners.push(newPartnerKey);
+            }
           }
+        }
+        
+        // Keep original edges (bond labels -> target component indices)
+        for (const [label, targetCompIdx] of comp.edges.entries()) {
+          newEdges.set(label, targetCompIdx);
         }
         comp.edges = newEdges;
       }
@@ -194,16 +241,18 @@ export class SpeciesGraph {
         const curr = queue.shift()!;
         componentMols.push(curr);
 
-        // Check neighbors via adjacency
+        // Check neighbors via adjacency (support multi-site bonding)
         const mol = this.molecules[curr];
         for (let c = 0; c < mol.components.length; c++) {
           const key = `${curr}.${c}`;
-          const partner = this.adjacency.get(key);
-          if (partner) {
-            const [pMol] = partner.split('.').map(Number);
-            if (!visited.has(pMol)) {
-              visited.add(pMol);
-              queue.push(pMol);
+          const partners = this.adjacency.get(key);
+          if (partners) {
+            for (const partner of partners) {
+              const [pMol] = partner.split('.').map(Number);
+              if (!visited.has(pMol)) {
+                visited.add(pMol);
+                queue.push(pMol);
+              }
             }
           }
         }
@@ -217,25 +266,36 @@ export class SpeciesGraph {
       const newMolecules = componentMols.map(idx => this.molecules[idx].clone());
       const newGraph = new SpeciesGraph(newMolecules);
 
-      // Reconstruct bonds
+      // Reconstruct bonds (support multi-site bonding)
+      const addedBonds = new Set<string>(); // Track added bonds to avoid duplicates
       componentMols.forEach(oldMolIdx => {
         const mol = this.molecules[oldMolIdx];
         mol.components.forEach((comp, compIdx) => {
           const key = `${oldMolIdx}.${compIdx}`;
-          const partner = this.adjacency.get(key);
-          if (partner) {
-            const [pMolIdx, pCompIdx] = partner.split('.').map(Number);
-            // Only add if we haven't added this bond yet (e.g. smaller index first)
-            if (oldMolIdx < pMolIdx) {
-              // Find bond label
-              let label: number | undefined;
-              for (const [l, targetC] of comp.edges.entries()) {
-                if (targetC === pCompIdx) label = l;
-              }
+          const partners = this.adjacency.get(key);
+          if (partners) {
+            for (const partner of partners) {
+              const [pMolIdx, pCompIdx] = partner.split('.').map(Number);
+              // Create canonical bond key to avoid duplicates
+              const bondKey = oldMolIdx < pMolIdx || (oldMolIdx === pMolIdx && compIdx < pCompIdx)
+                ? `${oldMolIdx}.${compIdx}-${pMolIdx}.${pCompIdx}`
+                : `${pMolIdx}.${pCompIdx}-${oldMolIdx}.${compIdx}`;
+              
+              if (!addedBonds.has(bondKey)) {
+                addedBonds.add(bondKey);
+                // Find bond label
+                let label: number | undefined;
+                for (const [l, targetC] of comp.edges.entries()) {
+                  if (targetC === pCompIdx) {
+                    label = l;
+                    break;
+                  }
+                }
 
-              const newM1 = oldToNew.get(oldMolIdx)!;
-              const newM2 = oldToNew.get(pMolIdx)!;
-              newGraph.addBond(newM1, compIdx, newM2, pCompIdx, label);
+                const newM1 = oldToNew.get(oldMolIdx)!;
+                const newM2 = oldToNew.get(pMolIdx)!;
+                newGraph.addBond(newM1, compIdx, newM2, pCompIdx, label);
+              }
             }
           }
         });
@@ -283,30 +343,33 @@ export class SpeciesGraph {
       return offsets[molIdx] + compIdx;
     };
 
-    for (const [key, partnerKey] of this.adjacency.entries()) {
+    for (const [key, partnerKeys] of this.adjacency.entries()) {
       const [molAStr, compAStr] = key.split('.');
-      const [molBStr, compBStr] = partnerKey.split('.');
       const molA = Number(molAStr);
       const compA = Number(compAStr);
-      const molB = Number(molBStr);
-      const compB = Number(compBStr);
+      
+      for (const partnerKey of partnerKeys) {
+        const [molBStr, compBStr] = partnerKey.split('.');
+        const molB = Number(molBStr);
+        const compB = Number(compBStr);
 
-      if (
-        Number.isNaN(molA) ||
-        Number.isNaN(compA) ||
-        Number.isNaN(molB) ||
-        Number.isNaN(compB)
-      ) {
-        continue;
+        if (
+          Number.isNaN(molA) ||
+          Number.isNaN(compA) ||
+          Number.isNaN(molB) ||
+          Number.isNaN(compB)
+        ) {
+          continue;
+        }
+
+        const idxA = getIndex(molA, compA);
+        const idxB = getIndex(molB, compB);
+        const bitIndex = idxA * totalComponents + idxB;
+        const arrayIndex = Math.floor(bitIndex / 32);
+        const bitPosition = bitIndex % 32;
+        const mask = (1 << bitPosition) >>> 0;
+        this.adjacencyBitset[arrayIndex] |= mask;
       }
-
-      const idxA = getIndex(molA, compA);
-      const idxB = getIndex(molB, compB);
-      const bitIndex = idxA * totalComponents + idxB;
-      const arrayIndex = Math.floor(bitIndex / 32);
-      const bitPosition = bitIndex % 32;
-      const mask = (1 << bitPosition) >>> 0;
-      this.adjacencyBitset[arrayIndex] |= mask;
     }
   }
 
@@ -316,7 +379,8 @@ export class SpeciesGraph {
       if (!this.adjacencyBitset || !this._componentOffsets || !this._componentCount) {
         const keyA = `${molA}.${compA}`;
         const keyB = `${molB}.${compB}`;
-        return this.adjacency.get(keyA) === keyB;
+        const partnersA = this.adjacency.get(keyA);
+        return partnersA !== undefined && partnersA.includes(keyB);
       }
     }
 
@@ -324,7 +388,8 @@ export class SpeciesGraph {
     if (!total) {
       const keyA = `${molA}.${compA}`;
       const keyB = `${molB}.${compB}`;
-      return this.adjacency.get(keyA) === keyB;
+      const partnersA = this.adjacency.get(keyA);
+      return partnersA !== undefined && partnersA.includes(keyB);
     }
 
     const idxA = this._componentOffsets[molA] + compA;
@@ -393,6 +458,18 @@ export class SpeciesGraph {
     if (this._stringExact) return this._stringExact;
     this._stringExact = this.molecules.map(m => m.toString()).join('.');
     return this._stringExact;
+  }
+
+  /**
+   * Get or set the cached canonical string.
+   * Used by GraphCanonicalizer to avoid recomputing.
+   */
+  get cachedCanonical(): string | undefined {
+    return this._canonicalString;
+  }
+
+  set cachedCanonical(value: string | undefined) {
+    this._canonicalString = value;
   }
 
   /**

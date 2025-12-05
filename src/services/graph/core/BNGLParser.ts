@@ -142,7 +142,10 @@ export class BNGLParser {
     const compStrings = componentStr.split(',');
 
     for (const compStr of compStrings) {
-      const component = this.parseComponent(compStr.trim());
+      const trimmed = compStr.trim();
+      // Skip empty component strings (e.g., from double commas like "a,,b")
+      if (!trimmed) continue;
+      const component = this.parseComponent(trimmed);
       components.push(component);
     }
 
@@ -151,18 +154,20 @@ export class BNGLParser {
 
   /**
    * Parse a BNGL component string
-   * Examples: "b!1" (bonded), "c~P" (state), "d" (unbound)
+   * Examples: "b!1" (bonded), "c~P" (state), "d" (unbound), "x!1!2" (multi-bonded)
    */
   static parseComponent(compStr: string): Component {
     const parts = compStr.split('!');
     const nameAndStates = parts[0].trim();
-    const bondPart = parts[1];
+    const bondParts = parts.slice(1); // ALL bond parts, not just the first one
     const stateParts = nameAndStates.split('~');
     const name = stateParts[0];
     const states = stateParts.slice(1);
     const component = new Component(name, states);
     if (states.length > 0) component.state = states[0];
-    if (bondPart) {
+    
+    // Handle ALL bonds (for multi-site bonding like !1!2)
+    for (const bondPart of bondParts) {
       if (bondPart === '+' || bondPart === '?' || bondPart === '-') {
         component.wildcard = bondPart;
       } else {

@@ -11,15 +11,18 @@ const getNeighborMolecules = (graph: SpeciesGraph, molIdx: number): number[] => 
   }
 
   for (let compIdx = 0; compIdx < molecule.components.length; compIdx++) {
-    const partnerKey = graph.adjacency.get(adjacencyKey(molIdx, compIdx));
-    if (!partnerKey) {
+    const partnerKeys = graph.adjacency.get(adjacencyKey(molIdx, compIdx));
+    if (!partnerKeys) {
       continue;
     }
 
-    const [partnerMolStr] = partnerKey.split('.');
-    const partnerMolIdx = Number(partnerMolStr);
-    if (!Number.isNaN(partnerMolIdx)) {
-      neighbors.add(partnerMolIdx);
+    // Support multi-site bonding: iterate over all partners
+    for (const partnerKey of partnerKeys) {
+      const [partnerMolStr] = partnerKey.split('.');
+      const partnerMolIdx = Number(partnerMolStr);
+      if (!Number.isNaN(partnerMolIdx)) {
+        neighbors.add(partnerMolIdx);
+      }
     }
   }
 
@@ -37,6 +40,17 @@ const shouldLogGraphMatcher = false;
 // Safety limits to prevent infinite loops in pathological cases
 const MAX_VF2_ITERATIONS = 100000;
 const MAX_COMPONENT_ITERATIONS = 10000;
+
+// Cache for findAllMaps results - keyed by pattern string + target string
+const matchCache = new Map<string, MatchMap[]>();
+const MAX_CACHE_SIZE = 50000;
+
+/**
+ * Clear the match cache. Call this at the start of network generation.
+ */
+export function clearMatchCache() {
+  matchCache.clear();
+}
 
 /**
  * BioNetGen: Map::findMap() - VF2 subgraph isomorphism
@@ -217,6 +231,23 @@ export class GraphMatcher {
    * BioNetGen: SpeciesGraph::findMaps($pattern)
    */
   static findAllMaps(pattern: SpeciesGraph, target: SpeciesGraph): MatchMap[] {
+    // Fast pre-filter: check if target has enough molecules of each type
+    if (!this.canPossiblyMatch(pattern, target)) {
+      return [];
+    }
+    
+    // Check cache - use toString() as key since graphs are immutable during generation
+    // Note: caching is only valid within a single network generation run
+    const cacheKey = pattern.toString() + '|' + target.toString();
+    const cached = matchCache.get(cacheKey);
+    if (cached !== undefined) {
+      // Return a shallow copy to prevent mutations
+      return cached.map(m => ({
+        moleculeMap: new Map(m.moleculeMap),
+        componentMap: new Map(m.componentMap)
+      }));
+    }
+    
     const matches: MatchMap[] = [];
     const ordering = this.computeNodeOrdering(pattern, target);
     const state = new VF2State(pattern, target, ordering);
@@ -224,12 +255,43 @@ export class GraphMatcher {
     const iterationCount = { value: 0 };
     this.vf2Backtrack(state, matches, iterationCount);
 
+    // Cache result if cache not too large
+    if (matchCache.size < MAX_CACHE_SIZE) {
+      matchCache.set(cacheKey, matches);
+    }
+
     if (shouldLogGraphMatcher) {
       // console.log(
       //   `[GraphMatcher] Found ${matches.length} matches for pattern ${pattern.toString()} in target ${target.toString()}`
       // );
     }
     return matches;
+  }
+
+  /**
+   * Fast O(n) pre-filter: check if target has at least as many molecules of each type as pattern
+   */
+  private static canPossiblyMatch(pattern: SpeciesGraph, target: SpeciesGraph): boolean {
+    // Build molecule type count for pattern
+    const patternCounts = new Map<string, number>();
+    for (const mol of pattern.molecules) {
+      patternCounts.set(mol.name, (patternCounts.get(mol.name) || 0) + 1);
+    }
+    
+    // Build molecule type count for target
+    const targetCounts = new Map<string, number>();
+    for (const mol of target.molecules) {
+      targetCounts.set(mol.name, (targetCounts.get(mol.name) || 0) + 1);
+    }
+    
+    // Check that target has enough of each type
+    for (const [molType, count] of patternCounts) {
+      if ((targetCounts.get(molType) || 0) < count) {
+        return false;
+      }
+    }
+    
+    return true;
   }
 
   /**
@@ -981,12 +1043,16 @@ class VF2State {
             return false;
           }
         } else {
-          const neighborKey = this.target.adjacency.get(this.getAdjacencyKey(tMolIdx, tCompIdx));
-          if (!neighborKey) {
+          const neighborKeys = this.target.adjacency.get(this.getAdjacencyKey(tMolIdx, tCompIdx));
+          if (!neighborKeys || neighborKeys.length === 0) {
             return false;
           }
-          const [neighborMolIdxStr] = neighborKey.split('.');
-          if (Number(neighborMolIdxStr) !== tMolIdx) {
+          // For multi-site bonding, check if any neighbor is in the same molecule
+          const hasSameMolNeighbor = neighborKeys.some(neighborKey => {
+            const [neighborMolIdxStr] = neighborKey.split('.');
+            return Number(neighborMolIdxStr) === tMolIdx;
+          });
+          if (!hasSameMolNeighbor) {
             return false;
           }
         }
@@ -1007,10 +1073,13 @@ class VF2State {
           return false;
         }
       } else {
-        const neighborKey = this.target.adjacency.get(this.getAdjacencyKey(tMolIdx, tCompIdx));
-        if (!neighborKey) {
+        const neighborKeys = this.target.adjacency.get(this.getAdjacencyKey(tMolIdx, tCompIdx));
+        if (!neighborKeys || neighborKeys.length === 0) {
           return false;
         }
+        // For multi-site bonding, check all neighbors
+        // Use the first neighbor for now (simplification - may need more sophisticated handling)
+        const neighborKey = neighborKeys[0];
         const [neighborMolIdxStr] = neighborKey.split('.');
         const neighborMolIdx = Number(neighborMolIdxStr);
         if (this.coreTarget.has(neighborMolIdx)) {
@@ -1046,7 +1115,9 @@ class VF2State {
   ): boolean {
     const keyA = this.getAdjacencyKey(tMolIdxA, tCompIdxA);
     const keyB = this.getAdjacencyKey(tMolIdxB, tCompIdxB);
-    return this.target.adjacency.get(keyA) === keyB;
+    const partnersA = this.target.adjacency.get(keyA);
+    // Support multi-site bonding: check if keyB is in partners array
+    return partnersA !== undefined && partnersA.includes(keyB);
   }
 
   private targetCompartmentsMatch(molIdxA: number, molIdxB: number): boolean {

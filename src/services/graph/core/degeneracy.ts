@@ -48,45 +48,49 @@ const buildInducedSubgraph = (target: SpeciesGraph, included: number[]): Species
     return undefined;
   };
 
-  for (const [key, partnerKey] of target.adjacency.entries()) {
+  // Support multi-site bonding: adjacency now maps to arrays
+  for (const [key, partnerKeys] of target.adjacency.entries()) {
     const [molStr, compStr] = key.split('.');
-    const [partnerMolStr, partnerCompStr] = partnerKey.split('.');
     const molIdx = Number(molStr);
     const compIdx = Number(compStr);
-    const partnerMolIdx = Number(partnerMolStr);
-    const partnerCompIdx = Number(partnerCompStr);
+    
+    for (const partnerKey of partnerKeys) {
+      const [partnerMolStr, partnerCompStr] = partnerKey.split('.');
+      const partnerMolIdx = Number(partnerMolStr);
+      const partnerCompIdx = Number(partnerCompStr);
 
-    if (
-      !Number.isInteger(molIdx) ||
-      !Number.isInteger(compIdx) ||
-      !Number.isInteger(partnerMolIdx) ||
-      !Number.isInteger(partnerCompIdx)
-    ) {
-      continue;
+      if (
+        !Number.isInteger(molIdx) ||
+        !Number.isInteger(compIdx) ||
+        !Number.isInteger(partnerMolIdx) ||
+        !Number.isInteger(partnerCompIdx)
+      ) {
+        continue;
+      }
+
+      if (!includedSet.has(molIdx) || !includedSet.has(partnerMolIdx)) {
+        continue;
+      }
+
+      // Only add each bond once
+      const bondKey = molIdx < partnerMolIdx || (molIdx === partnerMolIdx && compIdx <= partnerCompIdx)
+        ? `${molIdx}.${compIdx}-${partnerMolIdx}.${partnerCompIdx}`
+        : `${partnerMolIdx}.${partnerCompIdx}-${molIdx}.${compIdx}`;
+
+      if (added.has(bondKey)) {
+        continue;
+      }
+      added.add(bondKey);
+
+      const newMolIdxA = oldToNew.get(molIdx);
+      const newMolIdxB = oldToNew.get(partnerMolIdx);
+      if (newMolIdxA === undefined || newMolIdxB === undefined) {
+        continue;
+      }
+
+      const label = getBondLabel(molIdx, compIdx, partnerCompIdx);
+      subgraph.addBond(newMolIdxA, compIdx, newMolIdxB, partnerCompIdx, label);
     }
-
-    if (!includedSet.has(molIdx) || !includedSet.has(partnerMolIdx)) {
-      continue;
-    }
-
-    // Only add each bond once
-    const bondKey = molIdx < partnerMolIdx || (molIdx === partnerMolIdx && compIdx <= partnerCompIdx)
-      ? `${molIdx}.${compIdx}-${partnerMolIdx}.${partnerCompIdx}`
-      : `${partnerMolIdx}.${partnerCompIdx}-${molIdx}.${compIdx}`;
-
-    if (added.has(bondKey)) {
-      continue;
-    }
-    added.add(bondKey);
-
-    const newMolIdxA = oldToNew.get(molIdx);
-    const newMolIdxB = oldToNew.get(partnerMolIdx);
-    if (newMolIdxA === undefined || newMolIdxB === undefined) {
-      continue;
-    }
-
-    const label = getBondLabel(molIdx, compIdx, partnerCompIdx);
-    subgraph.addBond(newMolIdxA, compIdx, newMolIdxB, partnerCompIdx, label);
   }
 
   return subgraph;

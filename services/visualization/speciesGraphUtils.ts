@@ -61,8 +61,9 @@ export const buildVisualizationMolecule = (
 
     const bonds = Array.from(component.edges.entries());
     if (bonds.length > 0) {
-      const partnerKey = graph.adjacency.get(`${molIdx}.${compIdx}`);
-      if (partnerKey) {
+      const partnerKeys = graph.adjacency.get(`${molIdx}.${compIdx}`);
+      if (partnerKeys && partnerKeys.length > 0) {
+        const partnerKey = partnerKeys[0]; // Use first partner for visualization
         const [partnerMolIdxStr, partnerCompIdxStr] = partnerKey.split('.');
         const partnerMolIdx = Number.parseInt(partnerMolIdxStr, 10);
         const partnerCompIdx = Number.parseInt(partnerCompIdxStr, 10);
@@ -105,54 +106,56 @@ export const extractBonds = (graphs: SpeciesGraph[]): Map<string, BondInfo> => {
   graphs.forEach((graph) => {
     graph.molecules.forEach((molecule, molIdx) => {
       molecule.components.forEach((component, compIdx) => {
-        const partnerKey = graph.adjacency.get(`${molIdx}.${compIdx}`);
-        if (!partnerKey) {
+        const partnerKeys = graph.adjacency.get(`${molIdx}.${compIdx}`);
+        if (!partnerKeys || partnerKeys.length === 0) {
           return;
         }
 
-        const [partnerMolIdxStr, partnerCompIdxStr] = partnerKey.split('.');
-        const partnerMolIdx = Number.parseInt(partnerMolIdxStr, 10);
-        const partnerCompIdx = Number.parseInt(partnerCompIdxStr, 10);
+        for (const partnerKey of partnerKeys) {
+          const [partnerMolIdxStr, partnerCompIdxStr] = partnerKey.split('.');
+          const partnerMolIdx = Number.parseInt(partnerMolIdxStr, 10);
+          const partnerCompIdx = Number.parseInt(partnerCompIdxStr, 10);
 
-        if (
-          Number.isNaN(partnerMolIdx) ||
-          Number.isNaN(partnerCompIdx) ||
-          (partnerMolIdx === molIdx && partnerCompIdx === compIdx)
-        ) {
-          return;
-        }
-
-        if (partnerMolIdx < molIdx || (partnerMolIdx === molIdx && partnerCompIdx < compIdx)) {
-          return;
-        }
-
-        const partnerMolecule = graph.molecules[partnerMolIdx];
-        const partnerComponent = partnerMolecule?.components[partnerCompIdx];
-        if (!partnerMolecule || !partnerComponent) {
-          return;
-        }
-
-        const endpoints = [
-          `${molecule.name}:${component.name}`,
-          `${partnerMolecule.name}:${partnerComponent.name}`,
-        ].sort();
-        const key = endpoints.join('|');
-
-        let bondLabel: string | undefined;
-        component.edges.forEach((targetCompIdx, edgeLabel) => {
-          if (targetCompIdx === partnerCompIdx) {
-            bondLabel = `!${edgeLabel}`;
+          if (
+            Number.isNaN(partnerMolIdx) ||
+            Number.isNaN(partnerCompIdx) ||
+            (partnerMolIdx === molIdx && partnerCompIdx === compIdx)
+          ) {
+            continue;
           }
-        });
 
-        bonds.set(key, {
-          key,
-          mol1: molecule.name,
-          mol2: partnerMolecule.name,
-          comp1: component.name,
-          comp2: partnerComponent.name,
-          label: bondLabel,
-        });
+          if (partnerMolIdx < molIdx || (partnerMolIdx === molIdx && partnerCompIdx < compIdx)) {
+            continue;
+          }
+
+          const partnerMolecule = graph.molecules[partnerMolIdx];
+          const partnerComponent = partnerMolecule?.components[partnerCompIdx];
+          if (!partnerMolecule || !partnerComponent) {
+            continue;
+          }
+
+          const endpoints = [
+            `${molecule.name}:${component.name}`,
+            `${partnerMolecule.name}:${partnerComponent.name}`,
+          ].sort();
+          const key = endpoints.join('|');
+
+          let bondLabel: string | undefined;
+          component.edges.forEach((targetCompIdx, edgeLabel) => {
+            if (targetCompIdx === partnerCompIdx) {
+              bondLabel = `!${edgeLabel}`;
+            }
+          });
+
+          bonds.set(key, {
+            key,
+            mol1: molecule.name,
+            mol2: partnerMolecule.name,
+            comp1: component.name,
+            comp2: partnerComponent.name,
+            label: bondLabel,
+          });
+        }
       });
     });
   });
